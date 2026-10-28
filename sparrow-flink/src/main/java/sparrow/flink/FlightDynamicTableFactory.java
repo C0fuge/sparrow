@@ -12,6 +12,8 @@ import org.apache.flink.table.factories.FactoryUtil;
 import org.apache.flink.table.types.DataType;
 import org.apache.flink.table.types.logical.RowType;
 
+import pro.surpin.data.arrowflight.client.Configuration;
+
 /** Factory of {@code 'connector' = 'arrow-flight'} tables. */
 public final class FlightDynamicTableFactory implements DynamicTableSourceFactory {
 
@@ -22,6 +24,24 @@ public final class FlightDynamicTableFactory implements DynamicTableSourceFactor
     public static final ConfigOption<String> TABLE = ConfigOptions.key("table").stringType().noDefaultValue()
             .withDescription("Server table (schema.table) or a SELECT statement.");
 
+    /** Connection of the {@link FlightCatalog} whose tables this factory creates, or null for DDL tables. */
+    private final Configuration catalogConfig;
+
+    /** Creates the factory of DDL tables (found by Flink's factory discovery). */
+    public FlightDynamicTableFactory() {
+        this(null);
+    }
+
+    /**
+     * Creates the factory of a catalog's tables: their options name only the server table, the connection is
+     * the catalog's (so credentials do not appear in table options).
+     *
+     * @param catalogConfig the catalog's client configuration, or null for DDL tables
+     */
+    FlightDynamicTableFactory(Configuration catalogConfig) {
+        this.catalogConfig = catalogConfig;
+    }
+
     @Override
     public String factoryIdentifier() {
         return IDENTIFIER;
@@ -29,14 +49,14 @@ public final class FlightDynamicTableFactory implements DynamicTableSourceFactor
 
     @Override
     public Set<ConfigOption<?>> requiredOptions() {
-        Set<ConfigOption<?>> options = new HashSet<>(FlightOptions.required());
+        Set<ConfigOption<?>> options = new HashSet<>(catalogConfig == null ? FlightOptions.required() : Set.of());
         options.add(TABLE);
         return options;
     }
 
     @Override
     public Set<ConfigOption<?>> optionalOptions() {
-        return FlightOptions.optional();
+        return catalogConfig == null ? FlightOptions.optional() : Set.of();
     }
 
     @Override
@@ -50,7 +70,8 @@ public final class FlightDynamicTableFactory implements DynamicTableSourceFactor
                         + ", which the arrow-flight connector does not support yet.");
             }
         }
-        return new FlightDynamicTableSource(FlightOptions.toClientConfiguration(helper.getOptions()),
-                helper.getOptions().get(TABLE), physical);
+        Configuration config = catalogConfig != null ? catalogConfig
+                : FlightOptions.toClientConfiguration(helper.getOptions());
+        return new FlightDynamicTableSource(config, helper.getOptions().get(TABLE), physical);
     }
 }

@@ -16,6 +16,7 @@ import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.SmallIntVector;
+import org.apache.arrow.vector.TimeMicroVector;
 import org.apache.arrow.vector.TimeStampMicroTZVector;
 import org.apache.arrow.vector.UInt8Vector;
 import org.apache.arrow.vector.VectorSchemaRoot;
@@ -147,5 +148,36 @@ class ArrowRowConverterTest {
         v.setValueCount(3);
         RowType none = (RowType) DataTypes.ROW().getLogicalType();
         assertEquals(3, convert(none, v).length);
+    }
+
+    @Test
+    void unsignedBigintAboveLongMaxIsReadIntoDecimal() {
+        UInt8Vector v = new UInt8Vector("c", allocator);
+        v.allocateNew(1);
+        v.set(0, -1L); // 2^64 - 1
+        v.setValueCount(1);
+        RowData[] rows = convert(row(DataTypes.DECIMAL(20, 0)), v);
+        assertEquals(new BigDecimal("18446744073709551615"), rows[0].getDecimal(0, 20, 0).toBigDecimal());
+    }
+
+    @Test
+    void timeWithSubMillisecondDigitsFailsInsteadOfBeingCut() {
+        TimeMicroVector v = new TimeMicroVector("c", allocator);
+        v.allocateNew(2);
+        v.set(0, 49_530_123_000L);
+        v.set(1, 49_530_123_456L);
+        v.setValueCount(2);
+        RowType type = row(DataTypes.TIME(3));
+        try (VectorSchemaRoot root = new VectorSchemaRoot(List.of(v))) {
+            root.setRowCount(2);
+            IllegalStateException e = assertThrows(IllegalStateException.class,
+                    () -> new ArrowRowConverter(type).convert(root));
+            assertTrue(e.getMessage().contains("sub-millisecond"), e.getMessage());
+        }
+        TimeMicroVector exact = new TimeMicroVector("c", allocator);
+        exact.allocateNew(1);
+        exact.set(0, 49_530_123_000L);
+        exact.setValueCount(1);
+        assertEquals(49_530_123, convert(type, exact)[0].getInt(0));
     }
 }

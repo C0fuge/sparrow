@@ -1,6 +1,6 @@
 # Flink connector (`sparrow-flink`)
 
-Native Arrow Flight table source for Flink SQL / Table API (Flink 1.20). Status and backlog: `STATUS.md`.
+Native Arrow Flight table source and catalog for Flink SQL / Table API (Flink 1.20). Status and backlog: `STATUS.md`.
 
 ```sql
 CREATE TABLE orders (o_orderkey BIGINT, o_totalprice DECIMAL(15, 2), o_orderdate DATE)
@@ -19,6 +19,32 @@ How it reads: when the job starts, the split enumerator (job manager) plans the 
 and the subtasks read the splits in parallel. Each endpoint's locations are tried in order (primary, then the
 backup locations) by the client core when a stream is opened. Selected columns, filters and `LIMIT` are pushed
 into the server SQL (see below).
+
+## Catalog
+
+```sql
+CREATE CATALOG flight WITH (
+  'type' = 'arrow-flight',
+  'host' = 'flight.example',
+  'port' = '8815',
+  'user' = 'me',
+  'token' = '...',
+  'default-database' = 'tpch'    -- a server schema; defaults to 'default-schema'
+);
+SELECT o_orderdate, sum(o_totalprice) FROM flight.tpch.orders GROUP BY o_orderdate;
+```
+
+Read-only: databases are the server schemas (Flight SQL `GetDbSchemas`), tables and their columns come from
+`GetTables` with the table schemas (the columns of `SELECT *`). The catalog's tables are read with the same
+source as DDL tables (same pushdown), over the catalog's connection: their options are only
+`connector` and `table`, credentials stay in the catalog. Catalog options: the connection options below plus
+`default-database`.
+
+Column types (all columns nullable): BOOL -> BOOLEAN; INT8..INT64 -> TINYINT..BIGINT; unsigned integers -> the next
+wider signed type, UINT64 -> DECIMAL(20, 0); FLOAT/DOUBLE; DECIMAL(p, s) with p <= 38; UTF8 (all variants) ->
+STRING; BINARY -> BYTES, FIXED_SIZE_BINARY(n) -> BINARY(n); DATE; TIME -> TIME(0)/TIME(3); TIMESTAMP -> TIMESTAMP(p)
+with p = 0/3/6/9 by unit, with a time zone TIMESTAMP_LTZ(p). Columns of other types (lists, structs, maps,
+intervals, DECIMAL with p > 38, HALF_FLOAT) are left out of the table, with a warning in the log.
 
 ## Pushdown
 
@@ -56,7 +82,8 @@ BIGINT, FLOAT, DOUBLE, DECIMAL, CHAR/VARCHAR/STRING, BINARY/VARBINARY/BYTES, DAT
 type without time zone) and TIMESTAMP_LTZ (server type with time zone). The server may send narrower integer
 types than planned; values are widened. A value the declared type cannot hold (integer overflow, decimal
 fraction digits beyond the declared scale, a double read as FLOAT, a time-zone mismatch) fails the job — the
-connector never changes values silently. Other types are rejected when the table is created.
+connector never changes values silently (this includes a TIME value with sub-millisecond digits: Flink's TIME
+holds milliseconds). Other types are rejected when the table is created.
 
 ## Limits (current)
 

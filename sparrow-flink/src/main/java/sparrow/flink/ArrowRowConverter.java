@@ -170,14 +170,23 @@ final class ArrowRowConverter {
      */
     private static long checkedLong(String name, LogicalType type, FieldVector v, int r, long min, long max) {
         long value = cast(name, type, v, BaseIntVector.class).getValueAsLong(r);
-        if (v.getField().getType() instanceof ArrowType.Int i && !i.getIsSigned() && i.getBitWidth() == 64
-                && value < 0) {
+        if (unsigned64(v) && value < 0) {
             throw mismatch(name, type, v, "unsigned value " + Long.toUnsignedString(value) + " out of range");
         }
         if (value < min || value > max) {
             throw mismatch(name, type, v, "value " + value + " out of range");
         }
         return value;
+    }
+
+    /**
+     * Checks whether a vector holds unsigned 64-bit integers (read as negative longs above Long.MAX_VALUE).
+     *
+     * @param v vector
+     * @return true for UINT64
+     */
+    private static boolean unsigned64(FieldVector v) {
+        return v.getField().getType() instanceof ArrowType.Int i && !i.getIsSigned() && i.getBitWidth() == 64;
     }
 
     /**
@@ -197,7 +206,8 @@ final class ArrowRowConverter {
             } else if (v instanceof Decimal256Vector d) {
                 value = d.getObject(r);
             } else if (v instanceof BaseIntVector i) {
-                value = BigDecimal.valueOf(i.getValueAsLong(r));
+                long raw = i.getValueAsLong(r);
+                value = unsigned64(v) ? new BigDecimal(Long.toUnsignedString(raw)) : BigDecimal.valueOf(raw);
             } else {
                 throw mismatch(name, type, v, "not a decimal or integer column");
             }
@@ -276,7 +286,8 @@ final class ArrowRowConverter {
     }
 
     /**
-     * Reads a time of day as milliseconds (Flink's internal TIME representation).
+     * Reads a time of day as milliseconds (Flink's internal TIME representation); a value with a sub-millisecond
+     * part fails the read instead of being cut.
      *
      * @param name column name
      * @param type declared type
@@ -288,13 +299,31 @@ final class ArrowRowConverter {
         if (v instanceof TimeMilliVector t) {
             return t.get(r);
         } else if (v instanceof TimeMicroVector t) {
-            return (int) Math.floorDiv(t.get(r), 1_000L);
+            return exactMillis(name, type, v, t.get(r), 1_000L);
         } else if (v instanceof TimeNanoVector t) {
-            return (int) Math.floorDiv(t.get(r), 1_000_000L);
+            return exactMillis(name, type, v, t.get(r), 1_000_000L);
         } else if (v instanceof TimeSecVector t) {
             return t.get(r) * 1000;
         }
         throw mismatch(name, type, v, "not a time column");
+    }
+
+    /**
+     * Converts a finer time of day to milliseconds, failing when that would drop digits.
+     *
+     * @param name column name
+     * @param type declared type
+     * @param v vector
+     * @param value time of day in units of {@code 1 / perMilli} milliseconds
+     * @param perMilli units per millisecond
+     * @return milliseconds of the day
+     */
+    private static int exactMillis(String name, LogicalType type, FieldVector v, long value, long perMilli) {
+        if (value % perMilli != 0) {
+            throw mismatch(name, type, v, "time " + value + " has sub-millisecond digits, which Flink's TIME"
+                    + " cannot hold");
+        }
+        return (int) (value / perMilli);
     }
 
     /**

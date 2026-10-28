@@ -3,10 +3,13 @@
 <FindBugsFilter>
     <!--
       EI_EXPOSE_REP2: the client core's Configuration has setters, but the connector builds it once from the
-      table options and never changes it afterwards; Flink serializes the source to the tasks anyway.
+      table or catalog options and never changes it afterwards; Flink serializes the source to the tasks anyway.
     -->
     <Match>
         <Bug pattern="EI_EXPOSE_REP2"/>
-        <Class name="sparrow.flink.FlightSource"/>
+        <Or>
+            <Class name="sparrow.flink.FlightSource"/>
+            <Class name="sparrow.flink.FlightCatalog"/>
+        </Or>
     </Match>
 </FindBugsFilter>

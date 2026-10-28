@@ -13,7 +13,8 @@ import pro.surpin.data.arrowflight.server.TestFlightServerHelper;
 /**
  * In-process Arrow Flight SQL server for the tests over Parquet data generated with DuckDB in a temporary
  * directory: {@code sparrow.types} (one row per supported type plus an all-null row) and
- * {@code sparrow.numbers} (100 000 rows, several Arrow batches).
+ * {@code sparrow.numbers} (100 000 rows, several Arrow batches) and {@code sparrow.nested} (a list column the
+ * connector cannot read next to readable ones).
  */
 final class TestServer implements AutoCloseable {
 
@@ -43,10 +44,17 @@ final class TestServer implements AutoCloseable {
                 "user", "test-user", "token", "sparrow-test", "table", table);
     }
 
+    /** Catalog properties of an {@code arrow-flight} catalog on this server. */
+    Map<String, String> catalogOptions() {
+        return Map.of("type", "arrow-flight", "host", "localhost", "port", String.valueOf(port),
+                "user", "test-user", "token", "sparrow-test", "default-database", "sparrow");
+    }
+
     /** Writes the test tables as {@code <dir>/<schema>/<table>/*.parquet}. */
     private static void writeTables(Path dir) throws Exception {
         Path types = Files.createDirectories(dir.resolve("sparrow/types"));
         Path numbers = Files.createDirectories(dir.resolve("sparrow/numbers"));
+        Path nested = Files.createDirectories(dir.resolve("sparrow/nested"));
         try (Connection c = DriverManager.getConnection("jdbc:duckdb:"); Statement s = c.createStatement()) {
             s.execute("SET TimeZone = 'UTC'");
             s.execute("COPY (SELECT * FROM (VALUES "
@@ -59,6 +67,8 @@ final class TestServer implements AutoCloseable {
                     + types.resolve("part-0.parquet") + "' (FORMAT parquet)");
             s.execute("COPY (SELECT range::BIGINT AS n, (range % 7)::INTEGER AS m FROM range(" + NUMBERS
                     + ")) TO '" + numbers.resolve("part-0.parquet") + "' (FORMAT parquet)");
+            s.execute("COPY (SELECT 1 AS id, [1, 2] AS l, 'x' AS s) TO '" + nested.resolve("part-0.parquet")
+                    + "' (FORMAT parquet)");
         }
     }
 
