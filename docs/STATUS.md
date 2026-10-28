@@ -70,4 +70,4 @@ N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow 
   endpoint per node with backups, a node's Flight server killed (membership kept, so it still gets endpoints),
   its splits read from backups, Flink answers unchanged (fails with the old reader). Catalog names: the server
   only serves directory tables named `[A-Za-z_][A-Za-z0-9_]*`, so `FlightCatalog` never quotes them; a keyword
-  name (`group`) plans in partial mode unquoted. 53 tests (+3). CI 40731090607 (running).
+  name (`group`) plans in partial mode unquoted. 53 tests (+3). CI 40731090607 green.
