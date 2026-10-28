@@ -7,11 +7,12 @@ N1. **Apache Flink connector (native).** Done so far (step 1, see `docs/flink.md
     `FlightSplitReader` via `EndpointReader.forEndpoint` (client-core retries + backup locations), checked
     Arrow -> `GenericRowData` conversion for scalar types, projection pushdown, MiniCluster tests; N1b filter
     pushdown (`FilterTranslator`: only types/operators with identical semantics in Flink and DuckDB) and limit
-    pushdown. Remaining, in order:
-    - **N1c next:** `FlightCatalog` (+ `CatalogFactory` `arrow-flight`): databases = server schemas, tables from Flight SQL
-      `GetTables`/`GetColumns`, Arrow -> Flink type mapping (reuse/extend `ArrowRowConverter` rules).
-    - N1d: multi-endpoint + failover test: two in-process servers / partial mode (see how the server's tests run a
-      cluster), kill the primary location of an endpoint, answers stay equal.
+    pushdown; N1c `FlightCatalog` (`'type' = 'arrow-flight'`, read-only; databases = server schemas, tables
+    from `GetTables` with schemas, `ArrowTypeMapping`; catalog tables use the catalog's connection via
+    `Catalog.getFactory()`). Remaining, in order:
+    - **N1d next:** multi-endpoint + failover test: two in-process servers / partial mode (see how the server's
+      tests run a cluster), kill the primary location of an endpoint, answers stay equal. Also check there that
+      catalog tables whose names need quotes (`FlightCatalog.serverName`) plan in partial mode.
     - N1e: columnar conversion (Arrow vectors wrapped as Flink `ColumnVector`s / `ColumnarRowData` with an owned,
       transferred batch released on `recycle()`), keep the checked semantics; measure against step 1.
     - N1f: TLS and Kerberos tests (credentials generated in the job), TPC-H SF0.1 answers vs DuckDB, then perf vs
@@ -50,3 +51,8 @@ N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow 
   TIME, TIMESTAMP_LTZ, CHAR, nanosecond timestamps, LIKE with `_`/inner `%`/backslash stay in Flink) and limit
   pushdown; 34 tests (MiniCluster answers checked against values computed from the generated data, EXPLAIN shows
   `filter=[...]` / `limit=[5]`). CI 40708981574 green.
+- 2026-10-28: N1c done — `FlightCatalog` + `FlightCatalogFactory` (`FlightMetadata`: `GetDbSchemas`, `GetTables`
+  with schemas, names re-filtered exactly since filters are LIKE patterns), `ArrowTypeMapping` (always nullable;
+  unreadable columns left out with a warning), catalog tables carry only `connector`/`table` options. Fixed in
+  `ArrowRowConverter`: UINT64 > Long.MAX into DECIMAL was negative, TIME sub-millisecond digits were cut silently
+  (now fails). 50 tests (+16). CI 40717147805 green.
