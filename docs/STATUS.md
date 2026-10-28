@@ -11,8 +11,12 @@ N1. **Apache Flink connector (native).** Done so far (step 1, see `docs/flink.md
     from `GetTables` with schemas, `ArrowTypeMapping`; catalog tables use the catalog's connection via
     `Catalog.getFactory()`); N1d failover (the split reader tries an endpoint's locations itself, see Log;
     3-node in-process cluster test `TestCluster`); N1e columnar conversion (each Arrow batch copied once into
-    Flink heap vectors, rows are `ColumnarRowData` views; checked semantics kept). Remaining, in order:
-    - **N1f next:** TLS and Kerberos tests (credentials generated in the job), TPC-H SF0.1 answers vs DuckDB, then perf vs
+    Flink heap vectors, rows are `ColumnarRowData` views; checked semantics kept); N1f TLS + bearer + Kerberos
+    MiniCluster tests against two-node TLS clusters (`tls.truststore` options, in-process Kerby KDC). Remaining,
+    in order:
+    - **N1g next:** TPC-H SF0.1 answers vs DuckDB (generate with DuckDB's `tpch` extension in the test if it
+      can be loaded offline in CI, else `dbgen` data written by DuckDB `COPY`; run the 22 queries through Flink
+      SQL over catalog tables, compare to DuckDB on the same Parquet with numeric tolerance), then perf vs
       Flink JDBC + Flight SQL JDBC driver (`perf` tag), connector shading (uber jar), Flink 2.x module.
     Goal (maintainer): `DynamicTableSource` (ScanTableSource) + `Catalog` over the server's metadata: one
     Flink split per Flight endpoint in partial mode (parallel readers, backup locations for failover), Arrow batches
@@ -37,6 +41,12 @@ N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow 
   `EndpointReader` retries that same first location, so backup locations are never tried. The Flink connector now
   tries the locations itself (N1d); other client-core users (the Spark connector?) are likely affected. Fix in the
   server repo: try the next location when opening/the first `next()` fails. (maintainer → server repo)
+- Client core and BouncyCastle: `arrow-flight-client-core` depends on bcpkix/bcutil 1.85 (truststore -> PEM)
+  but a consumer with Hadoop 3.5 on the classpath resolves bcprov 1.82 and fails with `NoClassDefFoundError:
+  IANAObjectIdentifiers` as soon as `tls.truststore` is used. The connector pins bcprov 1.85 (as the server
+  does); client core could declare bcprov-jdk18on 1.85 itself. Also `Configuration(host, port, truststore,
+  ...)` only logs a warning and trusts nothing when the store cannot be read; the connector checks it and
+  fails at table creation. (maintainer → server repo)
 - `x-flight-location-failover: 1`: the connector now tries locations in order, so it could send this header and the
   planner would also list itself as a backup (today an endpoint on a dead node has only the other non-planner
   nodes as backups; in a 2-node cluster none). Not sent yet, as the header is part of the server contract -
@@ -79,3 +89,13 @@ N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow 
   so a copy needs no allocator lifecycle and cannot read freed memory. Perf (`ArrowRowConverterPerfTest`, `perf`
   tag; 8192-row lineitem-like batch, conversion + `RowDataSerializer.toBinaryRow`): 3.4-3.7 M rows/s vs 1.7 M
   rows/s with the step-1 `GenericRowData` converter (local, one run each). 56 tests (+3). CI 40746810605 green.
+- 2026-10-28: N1f done — TLS and auth tested end to end: `TestCluster` serves TLS (advertises `grpc+tls`
+  locations) with the server's own authenticators (test helper `ServerAuthenticators` in the server package);
+  certificate generated per run (BouncyCastle), Kerberos against an in-process Kerby KDC with generated
+  principals/keytabs, Flink cluster logging in from the client keytab (`security.kerberos.login.*`; without it
+  the MiniCluster's delegation-token manager tries a ticket cache and the job fails). Two-node clusters: both
+  nodes' endpoints read over TLS with the token / the Kerberos session (shared signing secret); wrong token,
+  untrusted certificate, plaintext client and unknown service principal fail the job. New options
+  `tls.truststore`/`tls.truststore.password` (validated at table creation); Kerberos without TLS or with a
+  password/token is now a validation error. bcprov pinned to 1.85 (see Open questions). 68 tests (+12).
+  CI 40765700528 green.
