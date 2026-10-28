@@ -91,6 +91,17 @@ intervals, DECIMAL with p > 38, HALF_FLOAT) are left out of the table, with a wa
 - Tested in the MiniCluster against two-node TLS clusters (generated certificate) with the server's bearer and
   Kerberos authenticators and an in-process KDC (`FlightTlsIntegrationTest`, `FlightKerberosIntegrationTest`).
 
+## Correctness: TPC-H
+
+`TpchIntegrationTest` runs the 22 TPC-H queries (validation parameters, `src/test/resources/tpch`) through
+Flink SQL over `arrow-flight` catalog tables of a two-node cluster in partial mode and compares every answer
+with DuckDB's on the same Parquet files (same rows in the same order, numbers up to a relative 1e-9). The
+data (SF 0.1, 600 k lineitems) comes from `TpchData`: DuckDB SQL with the TPC-H schema, cardinalities, key
+relations and value domains, filled with deterministic hash-based values (DuckDB's `tpch` extension is not
+bundled with the JDBC driver and CI should not download it), so the numbers are not the published TPC-H
+answers. The query texts are written in SQL both engines accept (`WITH` instead of the Q15 view, `val`
+instead of the reserved alias `value`, key columns added to `ORDER BY` where ties are possible).
+
 ## Types
 
 Columns are matched by position with the declared Flink schema. Supported: BOOLEAN, TINYINT, SMALLINT, INT,

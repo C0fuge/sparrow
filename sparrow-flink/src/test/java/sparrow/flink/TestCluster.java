@@ -152,10 +152,22 @@ final class TestCluster implements AutoCloseable {
 
     /** Starts {@code size} nodes with TLS and/or authentication ({@code security} null: neither). */
     static TestCluster start(int size, Security security) throws Exception {
+        return start(size, security, TestCluster::writeTables);
+    }
+
+    /** Writes a cluster's data as {@code <dir>/<schema>/<table>/*.parquet}. */
+    @FunctionalInterface
+    interface Data {
+        /** Writes the tables under {@code dir}. */
+        void write(Path dir) throws Exception;
+    }
+
+    /** Starts {@code size} nodes over the tables {@code data} writes instead of the default ones. */
+    static TestCluster start(int size, Security security, Data data) throws Exception {
         System.setProperty(DefaultAllocationManagerOption.ALLOCATION_MANAGER_TYPE_PROPERTY_NAME,
                 DefaultAllocationManagerOption.AllocationManagerType.Netty.name());
         Path dir = Files.createTempDirectory("sparrow-test-cluster");
-        writeTables(dir);
+        data.write(dir);
         Map<String, String> saved = new HashMap<>();
         for (String key : List.of("dataDir", "hazelcastPort", "duckDbWarmConnections", "duckDbGroups",
                 "duckDbThreads", "ioParallelism")) {
@@ -191,6 +203,11 @@ final class TestCluster implements AutoCloseable {
             });
         }
         return cluster;
+    }
+
+    /** Directory of the cluster's data, as {@code <schema>/<table>/*.parquet}. */
+    Path dataDir() {
+        return dataDir;
     }
 
     /** Node {@code i}; node 0 is the one clients connect to (the planner). */
