@@ -16,9 +16,10 @@ WITH (
 
 How it reads: when the job starts, the split enumerator (job manager) plans the query on the server
 (`GetFlightInfo`); every returned endpoint becomes one split (in `partial` result mode one per server node),
-and the subtasks read the splits in parallel. Each endpoint's locations are tried in order (primary, then the
-backup locations) by the client core when a stream is opened. Selected columns, filters and `LIMIT` are pushed
-into the server SQL (see below).
+and the subtasks read the splits in parallel. A split's locations are tried in order (primary, then the
+backup locations) until one returns the first batch, in up to `max-retries` + 1 rounds with exponential backoff
+between rounds; once rows were emitted a failure fails the read (a new stream would replay them).
+Selected columns, filters and `LIMIT` are pushed into the server SQL (see below).
 
 ## Catalog
 
@@ -73,7 +74,7 @@ intervals, DECIMAL with p > 38, HALF_FLOAT) are left out of the table, with a wa
 | `default-schema` | | Schema for unqualified names |
 | `kerberos.service-principal` | | Server principal; enables Kerberos (SPNEGO) |
 | `connect-timeout` | 30 s | Connect timeout |
-| `max-retries` | 3 | Retries of failed calls (planning, opening a stream) |
+| `max-retries` | 3 | Retries of failed calls: planning; opening a split (one round over all its locations per try) |
 
 ## Types
 
