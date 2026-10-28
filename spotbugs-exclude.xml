@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!-- SpotBugs exclusions. Every Match needs a comment with the reason. -->
 <FindBugsFilter>
+    <!--
+      EI_EXPOSE_REP2: the client core's Configuration has setters, but the connector builds it once from the
+      table options and never changes it afterwards; Flink serializes the source to the tasks anyway.
+    -->
+    <Match>
+        <Bug pattern="EI_EXPOSE_REP2"/>
+        <Class name="sparrow.flink.FlightSource"/>
+    </Match>
 </FindBugsFilter>

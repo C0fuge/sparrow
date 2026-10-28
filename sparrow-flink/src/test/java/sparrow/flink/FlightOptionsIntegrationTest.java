@@ -36,11 +36,11 @@ class FlightOptionsIntegrationTest {
     void connectsAndPlans() {
         var config = FlightOptions.toClientConfiguration(Configuration.fromMap(Map.of(
                 "host", "localhost", "port", String.valueOf(server.port), "user", "test-user",
-                "token", "sparrow-options-it", "default-schema", "test_schema")));
+                "token", "sparrow-options-it", "default-schema", "sparrow")));
         Client client = Client.getOrCreate(config);
-        long count = client.execute("SELECT count(*) FROM test_schema.test_table");
+        long count = client.execute("SELECT count(*) FROM sparrow.numbers");
         assertTrue(count > 0, "rows: " + count);
-        QueryEndpoints qe = client.getQueryEndpoints("SELECT * FROM test_schema.test_table");
+        QueryEndpoints qe = client.getQueryEndpoints("SELECT * FROM sparrow.numbers");
         assertTrue(qe.getEndpoints().length >= 1);
         assertEquals(false, qe.getSchema().getFields().isEmpty());
     }

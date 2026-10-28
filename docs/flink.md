@@ -1,0 +1,53 @@
+# Flink connector (`sparrow-flink`)
+
+Native Arrow Flight table source for Flink SQL / Table API (Flink 1.20). Status and backlog: `STATUS.md`.
+
+```sql
+CREATE TABLE orders (o_orderkey BIGINT, o_totalprice DECIMAL(15, 2), o_orderdate DATE)
+WITH (
+  'connector' = 'arrow-flight',
+  'host' = 'flight.example',
+  'port' = '8815',
+  'user' = 'me',
+  'token' = '...',
+  'table' = 'tpch.orders'        -- schema.table, or a SELECT statement
+);
+```
+
+How it reads: when the job starts, the split enumerator (job manager) plans the query on the server
+(`GetFlightInfo`); every returned endpoint becomes one split (in `partial` result mode one per server node),
+and the subtasks read the splits in parallel. Each endpoint's locations are tried in order (primary, then the
+backup locations) by the client core when a stream is opened. Selected columns are pushed into the server SQL.
+
+## Options
+
+| Option | Default | Meaning |
+|---|---|---|
+| `host` | (required) | Server host |
+| `port` | 8815 | Server port |
+| `table` | (required) | `schema.table` or a `SELECT` statement (wrapped as a sub-query) |
+| `user` | | User name (basic auth, or the owner of a token) |
+| `password` | | Password (basic auth); not together with `token` |
+| `token` | | Bearer token |
+| `tls` | false | Connect with TLS |
+| `tls.verify` | true | Verify the server certificate |
+| `default-schema` | | Schema for unqualified names |
+| `kerberos.service-principal` | | Server principal; enables Kerberos (SPNEGO) |
+| `connect-timeout` | 30 s | Connect timeout |
+| `max-retries` | 3 | Retries of failed calls (planning, opening a stream) |
+
+## Types
+
+Columns are matched by position with the declared Flink schema. Supported: BOOLEAN, TINYINT, SMALLINT, INT,
+BIGINT, FLOAT, DOUBLE, DECIMAL, CHAR/VARCHAR/STRING, BINARY/VARBINARY/BYTES, DATE, TIME, TIMESTAMP (server
+type without time zone) and TIMESTAMP_LTZ (server type with time zone). The server may send narrower integer
+types than planned; values are widened. A value the declared type cannot hold (integer overflow, decimal
+fraction digits beyond the declared scale, a double read as FLOAT, a time-zone mismatch) fails the job — the
+connector never changes values silently. Other types are rejected when the table is created.
+
+## Limits (current)
+
+- Bounded source. Run it in batch mode: a Flight stream cannot be resumed at a row offset, so restoring a
+  streaming checkpoint taken while a split was half read fails with an explicit error instead of
+  duplicating or losing rows.
+- The connector jar needs Java 21 on the Flink cluster (the server's client core is built for Java 21).
