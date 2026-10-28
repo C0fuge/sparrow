@@ -1,27 +1,37 @@
 package sparrow.flink;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BigIntVector;
+import org.apache.arrow.vector.BitVector;
+import org.apache.arrow.vector.DateDayVector;
 import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.LargeVarCharVector;
 import org.apache.arrow.vector.SmallIntVector;
 import org.apache.arrow.vector.TimeMicroVector;
 import org.apache.arrow.vector.TimeStampMicroTZVector;
+import org.apache.arrow.vector.TimeStampMicroVector;
 import org.apache.arrow.vector.UInt8Vector;
+import org.apache.arrow.vector.VarBinaryVector;
+import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.flink.table.api.DataTypes;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.data.columnar.ColumnarRowData;
+import org.apache.flink.table.data.columnar.vector.VectorizedColumnBatch;
 import org.apache.flink.table.types.logical.RowType;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
@@ -44,8 +54,16 @@ class ArrowRowConverterTest {
     private RowData[] convert(RowType type, FieldVector vector) {
         try (VectorSchemaRoot root = new VectorSchemaRoot(List.of(vector))) {
             root.setRowCount(vector.getValueCount());
-            return new ArrowRowConverter(type).convert(root);
+            return rows(new ArrowRowConverter(type).convert(root));
         }
+    }
+
+    private static RowData[] rows(VectorizedColumnBatch batch) {
+        RowData[] rows = new RowData[batch.getNumRows()];
+        for (int r = 0; r < rows.length; r++) {
+            rows[r] = new ColumnarRowData(batch, r);
+        }
+        return rows;
     }
 
     @Test
@@ -179,5 +197,105 @@ class ArrowRowConverterTest {
         exact.set(0, 49_530_123_000L);
         exact.setValueCount(1);
         assertEquals(49_530_123, convert(type, exact)[0].getInt(0));
+    }
+
+    @Test
+    void columnarBatchOutlivesTheArrowBuffers() {
+        BitVector bools = new BitVector("b", allocator);
+        IntVector ints = new IntVector("i", allocator);
+        VarCharVector strings = new VarCharVector("s", allocator);
+        LargeVarCharVector large = new LargeVarCharVector("l", allocator);
+        VarBinaryVector bins = new VarBinaryVector("y", allocator);
+        DecimalVector decimals = new DecimalVector("d", allocator, 12, 2);
+        DateDayVector dates = new DateDayVector("t", allocator);
+        TimeStampMicroVector stamps = new TimeStampMicroVector("ts", allocator);
+        List<FieldVector> vectors = List.of(bools, ints, strings, large, bins, decimals, dates, stamps);
+        vectors.forEach(v -> v.setInitialCapacity(3));
+        vectors.forEach(FieldVector::allocateNew);
+        bools.set(0, 1);
+        bools.set(2, 0);
+        ints.set(0, 7);
+        ints.set(2, -7);
+        strings.setSafe(0, "äb".getBytes(StandardCharsets.UTF_8));
+        strings.setSafe(2, new byte[0]);
+        large.setSafe(0, "x".getBytes(StandardCharsets.UTF_8));
+        large.setSafe(2, "yz".getBytes(StandardCharsets.UTF_8));
+        bins.setSafe(0, new byte[] {1, 2});
+        bins.setSafe(2, new byte[] {3});
+        decimals.set(0, new BigDecimal("-1.25"));
+        decimals.set(2, new BigDecimal("9999999999.99"));
+        dates.set(0, 19_000);
+        dates.set(2, -1);
+        stamps.set(0, -1L);
+        stamps.set(2, 1_000_001L);
+        vectors.forEach(v -> v.setNull(1));
+        vectors.forEach(v -> v.setValueCount(3));
+        RowType type = (RowType) DataTypes.ROW(DataTypes.FIELD("b", DataTypes.BOOLEAN()),
+                DataTypes.FIELD("i", DataTypes.BIGINT()), DataTypes.FIELD("s", DataTypes.STRING()),
+                DataTypes.FIELD("l", DataTypes.STRING()), DataTypes.FIELD("y", DataTypes.BYTES()),
+                DataTypes.FIELD("d", DataTypes.DECIMAL(12, 2)), DataTypes.FIELD("t", DataTypes.DATE()),
+                DataTypes.FIELD("ts", DataTypes.TIMESTAMP(6))).getLogicalType();
+        RowData[] rows;
+        try (VectorSchemaRoot root = new VectorSchemaRoot(vectors)) {
+            root.setRowCount(3);
+            rows = rows(new ArrowRowConverter(type).convert(root));
+        }
+        // The Arrow buffers are released here; the rows must not depend on them.
+        for (int c = 0; c < 8; c++) {
+            assertTrue(rows[1].isNullAt(c), "column " + c);
+            assertFalse(rows[0].isNullAt(c), "column " + c);
+        }
+        assertTrue(rows[0].getBoolean(0));
+        assertFalse(rows[2].getBoolean(0));
+        assertEquals(7L, rows[0].getLong(1));
+        assertEquals(-7L, rows[2].getLong(1));
+        assertEquals("äb", rows[0].getString(2).toString());
+        assertEquals("", rows[2].getString(2).toString());
+        assertEquals("x", rows[0].getString(3).toString());
+        assertEquals("yz", rows[2].getString(3).toString());
+        assertArrayEquals(new byte[] {1, 2}, rows[0].getBinary(4));
+        assertArrayEquals(new byte[] {3}, rows[2].getBinary(4));
+        assertEquals(new BigDecimal("-1.25"), rows[0].getDecimal(5, 12, 2).toBigDecimal());
+        assertEquals(new BigDecimal("9999999999.99"), rows[2].getDecimal(5, 12, 2).toBigDecimal());
+        assertEquals(19_000, rows[0].getInt(6));
+        assertEquals(-1, rows[2].getInt(6));
+        assertEquals(-1L, rows[0].getTimestamp(7, 6).getMillisecond());
+        assertEquals(999_000, rows[0].getTimestamp(7, 6).getNanoOfMillisecond());
+        assertEquals(1_000L, rows[2].getTimestamp(7, 6).getMillisecond());
+        assertEquals(1_000, rows[2].getTimestamp(7, 6).getNanoOfMillisecond());
+    }
+
+    @Test
+    void nullRowsAreNotRangeChecked() {
+        // A null slot keeps whatever its data buffer holds; that value must not fail the narrowing check.
+        BigIntVector v = new BigIntVector("c", allocator);
+        v.allocateNew(2);
+        v.set(0, 1L << 40);
+        v.set(1, 5L);
+        v.setNull(0);
+        v.setValueCount(2);
+        RowData[] rows = convert(row(DataTypes.INT()), v);
+        assertTrue(rows[0].isNullAt(0));
+        assertEquals(5, rows[1].getInt(0));
+    }
+
+    @Test
+    void wideDecimalsAndEmptyBatches() {
+        DecimalVector v = new DecimalVector("c", allocator, 30, 2);
+        v.allocateNew(1);
+        v.set(0, new BigDecimal("-123456789012345678901234.56"));
+        v.setValueCount(1);
+        assertEquals(new BigDecimal("-123456789012345678901234.56"),
+                convert(row(DataTypes.DECIMAL(30, 2)), v)[0].getDecimal(0, 30, 2).toBigDecimal());
+        DecimalVector narrow = new DecimalVector("c", allocator, 5, 2);
+        narrow.allocateNew(1);
+        narrow.set(0, new BigDecimal("-123.45"));
+        narrow.setValueCount(1);
+        assertEquals(new BigDecimal("-123.45"),
+                convert(row(DataTypes.DECIMAL(30, 2)), narrow)[0].getDecimal(0, 30, 2).toBigDecimal());
+        VarCharVector empty = new VarCharVector("c", allocator);
+        empty.allocateNew(0);
+        empty.setValueCount(0);
+        assertEquals(0, convert(row(DataTypes.STRING()), empty).length);
     }
 }

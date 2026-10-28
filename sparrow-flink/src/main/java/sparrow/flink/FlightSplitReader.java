@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.Set;
 
 import org.apache.flink.connector.base.source.reader.RecordsBySplits;
 import org.apache.flink.connector.base.source.reader.RecordsWithSplitIds;
@@ -11,6 +12,8 @@ import org.apache.flink.connector.base.source.reader.splitreader.SplitReader;
 import org.apache.flink.connector.base.source.reader.splitreader.SplitsAddition;
 import org.apache.flink.connector.base.source.reader.splitreader.SplitsChange;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.data.columnar.ColumnarRowData;
+import org.apache.flink.table.data.columnar.vector.VectorizedColumnBatch;
 import org.apache.flink.table.types.logical.RowType;
 import org.apache.flink.util.InstantiationUtil;
 import org.slf4j.Logger;
@@ -23,7 +26,8 @@ import pro.surpin.data.arrowflight.client.read.EndpointReader;
 
 /**
  * Reads assigned splits one after another in the fetcher thread: one Arrow batch per {@link #fetch()},
- * converted to rows before the next batch replaces the stream's buffers. Opening a split tries its locations in
+ * copied into a Flink columnar batch (rows are {@link ColumnarRowData} views of it) before the next batch replaces
+ * the stream's buffers. Opening a split tries its locations in
  * order (primary, then the backups) until one returns its first batch, in up to {@code max-retries + 1} rounds
  * with exponential backoff between rounds; a failure after rows were returned fails the read, since a new
  * stream would replay them.
@@ -69,17 +73,14 @@ final class FlightSplitReader implements SplitReader<RowData, FlightSplit> {
         } else {
             batch = reader.nextBatch();
         }
-        RecordsBySplits.Builder<RowData> out = new RecordsBySplits.Builder<>();
         if (batch) {
-            for (RowData row : converter.convert(reader.root())) {
-                out.add(current.splitId(), row);
-            }
-        } else {
-            out.addFinishedSplit(current.splitId());
-            reader.close();
-            reader = null;
-            current = null;
+            return new BatchRecords(current.splitId(), converter.convert(reader.root()));
         }
+        RecordsBySplits.Builder<RowData> out = new RecordsBySplits.Builder<>();
+        out.addFinishedSplit(current.splitId());
+        reader.close();
+        reader = null;
+        current = null;
         return out.build();
     }
 
@@ -178,6 +179,42 @@ final class FlightSplitReader implements SplitReader<RowData, FlightSplit> {
         if (reader != null) {
             reader.close();
             reader = null;
+        }
+    }
+
+    /** The rows of one columnar batch of one split; each row is its own view, so emitted rows stay valid. */
+    private static final class BatchRecords implements RecordsWithSplitIds<RowData> {
+
+        private final VectorizedColumnBatch batch;
+        private String splitId;
+        private int next;
+
+        /**
+         * Creates the records of a batch.
+         *
+         * @param splitId split the batch belongs to
+         * @param batch converted batch
+         */
+        BatchRecords(String splitId, VectorizedColumnBatch batch) {
+            this.splitId = splitId;
+            this.batch = batch;
+        }
+
+        @Override
+        public String nextSplit() {
+            String id = splitId;
+            splitId = null;
+            return id;
+        }
+
+        @Override
+        public RowData nextRecordFromSplit() {
+            return next < batch.getNumRows() ? new ColumnarRowData(batch, next++) : null;
+        }
+
+        @Override
+        public Set<String> finishedSplits() {
+            return Set.of();
         }
     }
 }

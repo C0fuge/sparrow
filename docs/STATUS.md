@@ -10,10 +10,9 @@ N1. **Apache Flink connector (native).** Done so far (step 1, see `docs/flink.md
     pushdown; N1c `FlightCatalog` (`'type' = 'arrow-flight'`, read-only; databases = server schemas, tables
     from `GetTables` with schemas, `ArrowTypeMapping`; catalog tables use the catalog's connection via
     `Catalog.getFactory()`); N1d failover (the split reader tries an endpoint's locations itself, see Log;
-    3-node in-process cluster test `TestCluster`). Remaining, in order:
-    - **N1e next:** columnar conversion (Arrow vectors wrapped as Flink `ColumnVector`s / `ColumnarRowData` with an owned,
-      transferred batch released on `recycle()`), keep the checked semantics; measure against step 1.
-    - N1f: TLS and Kerberos tests (credentials generated in the job), TPC-H SF0.1 answers vs DuckDB, then perf vs
+    3-node in-process cluster test `TestCluster`); N1e columnar conversion (each Arrow batch copied once into
+    Flink heap vectors, rows are `ColumnarRowData` views; checked semantics kept). Remaining, in order:
+    - **N1f next:** TLS and Kerberos tests (credentials generated in the job), TPC-H SF0.1 answers vs DuckDB, then perf vs
       Flink JDBC + Flight SQL JDBC driver (`perf` tag), connector shading (uber jar), Flink 2.x module.
     Goal (maintainer): `DynamicTableSource` (ScanTableSource) + `Catalog` over the server's metadata: one
     Flink split per Flight endpoint in partial mode (parallel readers, backup locations for failover), Arrow batches
@@ -71,3 +70,12 @@ N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow 
   its splits read from backups, Flink answers unchanged (fails with the old reader). Catalog names: the server
   only serves directory tables named `[A-Za-z_][A-Za-z0-9_]*`, so `FlightCatalog` never quotes them; a keyword
   name (`group`) plans in partial mode unquoted. 53 tests (+3). CI 40731090607 green.
+- 2026-10-28: N1e done — `ArrowRowConverter` now builds a `VectorizedColumnBatch` per Arrow batch (Flink heap
+  vectors: primitive arrays, one array copy of a VARCHAR/VARBINARY data buffer, unscaled longs for DECIMAL <= 18
+  digits with matching scale; DECIMAL/TIMESTAMP as immutable `DecimalData`/`TimestampData`), the split reader emits
+  one `ColumnarRowData` per row. Range checks skipped only where the Arrow type makes them unnecessary, and never
+  applied to null slots. Chose a heap copy over wrapping the Arrow buffers (planned "transfer + release on
+  `recycle()`"): the fetcher queues batches ahead of emission and rows may outlive `recycle()` with object reuse,
+  so a copy needs no allocator lifecycle and cannot read freed memory. Perf (`ArrowRowConverterPerfTest`, `perf`
+  tag; 8192-row lineitem-like batch, conversion + `RowDataSerializer.toBinaryRow`): 3.4-3.7 M rows/s vs 1.7 M
+  rows/s with the step-1 `GenericRowData` converter (local, one run each). 56 tests (+3).
