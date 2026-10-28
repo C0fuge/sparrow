@@ -49,4 +49,4 @@ N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow 
 - 2026-10-28: N1b done — filter pushdown (`FilterTranslator` -> client-core `Expr`/`SqlRenderer`; FLOAT/DOUBLE,
   TIME, TIMESTAMP_LTZ, CHAR, nanosecond timestamps, LIKE with `_`/inner `%`/backslash stay in Flink) and limit
   pushdown; 34 tests (MiniCluster answers checked against values computed from the generated data, EXPLAIN shows
-  `filter=[...]` / `limit=[5]`). CI RUNID.
+  `filter=[...]` / `limit=[5]`). CI 40708981574 green.
