@@ -32,7 +32,8 @@ N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow 
 
 ## Open questions
 
-- Which Flink version runs (or will run) in production? (maintainer, pending)
+- ~~Which Flink version runs in production?~~ Answered 2026-10-28: production has no Flink; target the most widely deployed
+  line - Flink 1.20 LTS first (connector API stable, most installations), then a Flink 2.x build profile.
 - Java: `arrow-flight-client-core` is compiled for Java 21, so the Flink cluster must run on Java 21 (Flink 1.20
   supports it as experimental). If production Flink runs on Java 11/17, could the server repo build client core
   with `--release 17`? (maintainer → server repo)
