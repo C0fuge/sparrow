@@ -78,4 +78,4 @@ N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow 
   `recycle()`"): the fetcher queues batches ahead of emission and rows may outlive `recycle()` with object reuse,
   so a copy needs no allocator lifecycle and cannot read freed memory. Perf (`ArrowRowConverterPerfTest`, `perf`
   tag; 8192-row lineitem-like batch, conversion + `RowDataSerializer.toBinaryRow`): 3.4-3.7 M rows/s vs 1.7 M
-  rows/s with the step-1 `GenericRowData` converter (local, one run each). 56 tests (+3).
+  rows/s with the step-1 `GenericRowData` converter (local, one run each). 56 tests (+3). CI 40746810605 green.
