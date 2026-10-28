@@ -12,12 +12,13 @@ N1. **Apache Flink connector (native).** Done so far (step 1, see `docs/flink.md
     `Catalog.getFactory()`); N1d failover (the split reader tries an endpoint's locations itself, see Log;
     3-node in-process cluster test `TestCluster`); N1e columnar conversion (each Arrow batch copied once into
     Flink heap vectors, rows are `ColumnarRowData` views; checked semantics kept); N1f TLS + bearer + Kerberos
-    MiniCluster tests against two-node TLS clusters (`tls.truststore` options, in-process Kerby KDC). Remaining,
-    in order:
-    - **N1g next:** TPC-H SF0.1 answers vs DuckDB (generate with DuckDB's `tpch` extension in the test if it
-      can be loaded offline in CI, else `dbgen` data written by DuckDB `COPY`; run the 22 queries through Flink
-      SQL over catalog tables, compare to DuckDB on the same Parquet with numeric tolerance), then perf vs
-      Flink JDBC + Flight SQL JDBC driver (`perf` tag), connector shading (uber jar), Flink 2.x module.
+    MiniCluster tests against two-node TLS clusters (`tls.truststore` options, in-process Kerby KDC); N1g
+    TPC-H SF0.1: all 22 queries through Flink SQL over catalog tables of a 2-node partial-mode cluster equal
+    DuckDB's answers on the same Parquet (`TpchIntegrationTest`, data from `TpchData`). Remaining, in order:
+    - **N1h next:** perf vs Flink JDBC + Flight SQL JDBC driver (`perf` tag, TPC-H SF1 with `TpchData`, Flink
+      SQL `connector = 'jdbc'` with the Arrow Flight SQL JDBC driver against the same in-process cluster; report
+      wall time per query, local runs only, numbers into the Log). Then SF1 answers (same test, `perf` or a
+      new `tpch-sf1` tag if it is too slow for every CI run), connector shading (uber jar), Flink 2.x module.
     Goal (maintainer): `DynamicTableSource` (ScanTableSource) + `Catalog` over the server's metadata: one
     Flink split per Flight endpoint in partial mode (parallel readers, backup locations for failover), Arrow batches
     converted to Flink `RowData` columnar-wise (no per-value boxing where avoidable), projection + filter + limit pushdown
@@ -99,3 +100,13 @@ N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow 
   `tls.truststore`/`tls.truststore.password` (validated at table creation); Kerberos without TLS or with a
   password/token is now a validation error. bcprov pinned to 1.85 (see Open questions). 68 tests (+12).
   CI 40765700528 green.
+- 2026-10-28: N1g done — TPC-H SF0.1 correctness: `TpchData` writes TPC-H-shaped data with DuckDB SQL
+  (schema, cardinalities, key relations, dbgen value domains and word lists, deterministic hash values; the
+  `tpch` extension is not bundled in the DuckDB JDBC jar and CI should not download it), large tables in 4
+  files; `TpchIntegrationTest` runs the 22 queries (validation parameters, one dialect for both engines, key
+  tie-breakers in `ORDER BY`) through Flink over an `arrow-flight` catalog on a 2-node `TestCluster` (lineitem
+  endpoints on both nodes asserted) and compares ordered rows with DuckDB on the same files: all equal (DOUBLE
+  avg/quotients in DuckDB vs Flink DECIMAL(…, 6) compared at Flink's scale). Found: with `-ea` Calcite's
+  Volcano planner fails Q18/Q21 with its internal "has wrong best cost" check (no statistics involved; not
+  active in production) - Calcite assertions now disabled in surefire (`-da:org.apache.calcite...`).
+  ~90 s for the 22 queries locally. 91 tests (+23). CI 40781931010 green.
