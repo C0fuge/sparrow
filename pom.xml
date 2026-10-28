@@ -28,6 +28,11 @@
         <netty.version>4.2.19.Final</netty.version>
         <jackson.version>2.21.8</jackson.version>
         <junit.version>5.14.4</junit.version>
+        <!-- Client core needs bcpkix/bcutil 1.85 (truststore PEM); Hadoop brings bcprov 1.82: keep the three
+             in step, as the server does. -->
+        <bouncycastle.version>1.85</bouncycastle.version>
+        <!-- In-process KDC for the Kerberos tests, as in the server's tests. -->
+        <kerby.version>2.0.3</kerby.version>
         <!-- ./mvnw verify runs every tag except these; -Pperf / -Preal-services select them -->
         <excludedGroups>perf,real-services</excludedGroups>
         <groups />
@@ -72,6 +77,16 @@
                 <artifactId>arrow-flight-server</artifactId>
                 <version>${kestrel.version}</version>
                 <type>test-jar</type>
+            </dependency>
+            <dependency>
+                <groupId>org.bouncycastle</groupId>
+                <artifactId>bcprov-jdk18on</artifactId>
+                <version>${bouncycastle.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.kerby</groupId>
+                <artifactId>kerb-simplekdc</artifactId>
+                <version>${kerby.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.junit</groupId>

@@ -71,10 +71,25 @@ intervals, DECIMAL with p > 38, HALF_FLOAT) are left out of the table, with a wa
 | `token` | | Bearer token |
 | `tls` | false | Connect with TLS |
 | `tls.verify` | true | Verify the server certificate |
+| `tls.truststore` | | Truststore (JKS or PKCS12) with the certificate to trust instead of the JVM's trust anchors; its first certificate entry is used. Needs `tls` and `tls.verify` true; an unreadable store is an error when the table is created |
+| `tls.truststore.password` | (empty) | Password of `tls.truststore` |
 | `default-schema` | | Schema for unqualified names |
-| `kerberos.service-principal` | | Server principal; enables Kerberos (SPNEGO) |
+| `kerberos.service-principal` | | Server principal (`flight/host@REALM`); enables Kerberos (SPNEGO). Needs `tls`; not together with `password`/`token` |
 | `connect-timeout` | 30 s | Connect timeout |
 | `max-retries` | 3 | Retries of failed calls: planning; opening a split (one round over all its locations per try) |
+
+## Security
+
+- TLS: `'tls' = 'true'`. Endpoints advertised by the server carry their scheme (`grpc+tls`); a plaintext
+  endpoint location in a TLS plan is refused (credentials are never sent in clear).
+- Bearer token or user/password: sent on every call, to the planning node and to the nodes serving endpoints.
+- Kerberos: the connector takes the Hadoop login user of the task manager (Flink's
+  `security.kerberos.login.keytab` + `security.kerberos.login.principal`, or a ticket cache), exchanges a
+  service ticket for `kerberos.service-principal` with the planning node for a signed session, and reads all
+  endpoints with that session (the server nodes share the signing secret). Hadoop must be on the Flink
+  classpath with `hadoop.security.authentication = kerberos`.
+- Tested in the MiniCluster against two-node TLS clusters (generated certificate) with the server's bearer and
+  Kerberos authenticators and an in-process KDC (`FlightTlsIntegrationTest`, `FlightKerberosIntegrationTest`).
 
 ## Types
 

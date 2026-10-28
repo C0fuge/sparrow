@@ -1,5 +1,6 @@
 package sparrow.flink;
 
+import java.io.File;
 import java.net.ServerSocket;
 import java.net.URI;
 import java.nio.file.Files;
@@ -14,9 +15,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.Supplier;
 
 import org.apache.arrow.flight.FlightServer;
 import org.apache.arrow.flight.Location;
+import org.apache.arrow.flight.auth2.CallHeaderAuthenticator;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.DefaultAllocationManagerOption;
 import org.apache.arrow.memory.RootAllocator;
@@ -45,7 +48,8 @@ import pro.surpin.data.arrowflight.server.storage.HadoopDataStore;
  * node holds every file, so a partial-mode plan has one endpoint per node and lists the other nodes as backup
  * locations). Wired as the server's {@code TestFlightServerHelper} does, plus cluster seeds. Data:
  * {@code sparrow.numbers} ({@link #NUMBERS} rows in {@link #FILES} Parquet files) and the same rows in
- * {@code sparrow.group} (an SQL keyword as table name).
+ * {@code sparrow.group} (an SQL keyword as table name). With a {@link Security}, the nodes serve TLS (and
+ * advertise {@code grpc+tls} locations) and authenticate calls as the server does.
  */
 final class TestCluster implements AutoCloseable {
 
@@ -58,6 +62,16 @@ final class TestCluster implements AutoCloseable {
     private final BufferAllocator allocator;
     private final List<Node> nodes = new ArrayList<>();
 
+    /**
+     * TLS material and authentication of the nodes, as the server applies them ({@code FlightSecurity}).
+     *
+     * @param certificate PEM certificate chain, or null for plaintext
+     * @param privateKey PEM (PKCS#8) private key, or null for plaintext
+     * @param authenticator creates each node's authenticator, or null for none
+     */
+    record Security(File certificate, File privateKey, Supplier<CallHeaderAuthenticator> authenticator) {
+    }
+
     /** One server node. */
     static final class Node {
         final Location location;
@@ -68,7 +82,8 @@ final class TestCluster implements AutoCloseable {
         final ExecutorService executor = Executors.newCachedThreadPool();
         private boolean stopped;
 
-        private Node(BufferAllocator allocator, int flightPort, int hazelcastPort, String[] seeds) throws Exception {
+        private Node(BufferAllocator allocator, int flightPort, int hazelcastPort, String[] seeds, Security security)
+                throws Exception {
             System.setProperty("hazelcastPort", String.valueOf(hazelcastPort));
             AppConfig config = ConfigAdapter.getConfig();
             LocalFileSystem fs = new LocalFileSystem();
@@ -77,18 +92,26 @@ final class TestCluster implements AutoCloseable {
             DuckDbAdapter duckDb = new DuckDbAdapter(config, executor, DuckDbSetupPlan.of(List.of(), List.of()), 0,
                     Runtime.getRuntime().availableProcessors(), new ProducingStreamGate(0), false);
             MetadataService metadata = new MetadataService(parquet);
-            location = Location.forGrpcInsecure("localhost", flightPort);
+            boolean tls = security != null && security.certificate() != null;
+            location = tls ? Location.forGrpcTls("localhost", flightPort)
+                    : Location.forGrpcInsecure("localhost", flightPort);
             hazelcast = new HazelcastAdapter(config, seeds);
             cluster = new ClusterService(hazelcast, config, location.getUri().toString());
             QueryPlanner planner = new QueryPlanner(parquet, cluster, QueryPlanner.DEFAULT_BACKUP_LOCATIONS,
                     config.endpointsPerServer());
             ExecutionService execution = new ExecutionService(parquet, duckDb, metadata, config, executor);
             producer = new FlightSqlProducer(location, allocator, metadata, planner, execution, cluster, "partial");
-            server = FlightServer.builder(allocator, location, producer)
+            FlightServer.Builder builder = FlightServer.builder(allocator, location, producer)
                     .middleware(ResultModeMiddleware.KEY, new ResultModeMiddleware.Factory())
                     .middleware(StreamCompression.KEY, new StreamCompression.Factory(StreamCompression.Settings.DEFAULT))
-                    .middleware(FlightSessions.KEY, new FlightSessions(3600, 1000).factory())
-                    .build();
+                    .middleware(FlightSessions.KEY, new FlightSessions(3600, 1000).factory());
+            if (tls) {
+                builder.useTls(security.certificate(), security.privateKey());
+            }
+            if (security != null && security.authenticator() != null) {
+                builder.headerAuthenticator(security.authenticator().get());
+            }
+            server = builder.build();
             server.start();
         }
 
@@ -124,6 +147,11 @@ final class TestCluster implements AutoCloseable {
 
     /** Starts {@code size} nodes over freshly generated data and waits until they see each other. */
     static TestCluster start(int size) throws Exception {
+        return start(size, null);
+    }
+
+    /** Starts {@code size} nodes with TLS and/or authentication ({@code security} null: neither). */
+    static TestCluster start(int size, Security security) throws Exception {
         System.setProperty(DefaultAllocationManagerOption.ALLOCATION_MANAGER_TYPE_PROPERTY_NAME,
                 DefaultAllocationManagerOption.AllocationManagerType.Netty.name());
         Path dir = Files.createTempDirectory("sparrow-test-cluster");
@@ -147,7 +175,7 @@ final class TestCluster implements AutoCloseable {
                 seeds[i] = "127.0.0.1:" + hazelcastPorts[i];
             }
             for (int i = 0; i < size; i++) {
-                cluster.nodes.add(new Node(cluster.allocator, freePort(), hazelcastPorts[i], seeds));
+                cluster.nodes.add(new Node(cluster.allocator, freePort(), hazelcastPorts[i], seeds, security));
             }
             cluster.awaitMembers(size);
         } catch (Exception | Error e) {

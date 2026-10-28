@@ -57,6 +57,25 @@ class FlightOptionsTest {
     }
 
     @Test
+    void kerberosNeedsTlsAndNoPasswordOrToken() {
+        assertThrows(ValidationException.class, () -> FlightOptions.toClientConfiguration(
+                conf(Map.of("host", "h", "kerberos.service-principal", "flight/h@REALM"))));
+        assertThrows(ValidationException.class, () -> FlightOptions.toClientConfiguration(conf(Map.of("host", "h",
+                "tls", "true", "token", "t", "kerberos.service-principal", "flight/h@REALM"))));
+    }
+
+    @Test
+    void truststoreNeedsVerifiedTlsAndAReadableCertificate() {
+        assertThrows(ValidationException.class, () -> FlightOptions.toClientConfiguration(
+                conf(Map.of("host", "h", "tls.truststore", "/x.p12"))));
+        assertThrows(ValidationException.class, () -> FlightOptions.toClientConfiguration(
+                conf(Map.of("host", "h", "tls", "true", "tls.verify", "false", "tls.truststore", "/x.p12"))));
+        ValidationException e = assertThrows(ValidationException.class, () -> FlightOptions.toClientConfiguration(
+                conf(Map.of("host", "h", "tls", "true", "tls.truststore", "/does/not/exist.p12"))));
+        assertTrue(e.getMessage().contains("/does/not/exist.p12"), e.getMessage());
+    }
+
+    @Test
     void requiredAndOptionalAreDisjoint() {
         assertTrue(FlightOptions.optional().stream().noneMatch(FlightOptions.required()::contains));
     }

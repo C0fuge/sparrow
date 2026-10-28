@@ -44,6 +44,15 @@ public final class FlightOptions {
     public static final ConfigOption<Boolean> TLS_VERIFY = ConfigOptions.key("tls.verify").booleanType()
             .defaultValue(true).withDescription("Verify the server certificate (TLS only).");
 
+    /** Truststore with the certificate the server's certificate must chain to (TLS only). */
+    public static final ConfigOption<String> TLS_TRUSTSTORE = ConfigOptions.key("tls.truststore").stringType()
+            .noDefaultValue().withDescription("Path of a truststore (JKS or PKCS12) holding the certificate to "
+                    + "trust instead of the JVM's default trust anchors (TLS with verification only).");
+
+    /** Password of the truststore. */
+    public static final ConfigOption<String> TLS_TRUSTSTORE_PASSWORD = ConfigOptions.key("tls.truststore.password")
+            .stringType().defaultValue("").withDescription("Password of the truststore ('tls.truststore').");
+
     /** Default schema for unqualified table names. */
     public static final ConfigOption<String> DEFAULT_SCHEMA = ConfigOptions.key("default-schema").stringType()
             .noDefaultValue().withDescription("Schema for unqualified table names.");
@@ -80,8 +89,8 @@ public final class FlightOptions {
      * @return the optional options
      */
     public static Set<ConfigOption<?>> optional() {
-        return Set.of(PORT, USER, PASSWORD, TOKEN, TLS, TLS_VERIFY, DEFAULT_SCHEMA, KERBEROS_PRINCIPAL,
-                CONNECT_TIMEOUT, MAX_RETRIES);
+        return Set.of(PORT, USER, PASSWORD, TOKEN, TLS, TLS_VERIFY, TLS_TRUSTSTORE, TLS_TRUSTSTORE_PASSWORD,
+                DEFAULT_SCHEMA, KERBEROS_PRINCIPAL, CONNECT_TIMEOUT, MAX_RETRIES);
     }
 
     /**
@@ -107,10 +116,38 @@ public final class FlightOptions {
         if (password != null && token != null) {
             throw new ValidationException("Set either '" + PASSWORD.key() + "' or '" + TOKEN.key() + "', not both.");
         }
-        Configuration config = new Configuration(host, port, options.get(TLS), options.get(TLS_VERIFY),
-                options.getOptional(USER).orElse(null), password, token);
+        String user = options.getOptional(USER).orElse(null);
+        boolean tls = options.get(TLS);
+        String truststore = options.getOptional(TLS_TRUSTSTORE).orElse(null);
+        Configuration config;
+        if (truststore == null) {
+            config = new Configuration(host, port, tls, options.get(TLS_VERIFY), user, password, token);
+        } else {
+            if (!tls || !options.get(TLS_VERIFY)) {
+                throw new ValidationException("Option '" + TLS_TRUSTSTORE.key() + "' needs '" + TLS.key()
+                        + "' = 'true' and '" + TLS_VERIFY.key() + "' = 'true'.");
+            }
+            config = new Configuration(host, port, truststore, options.get(TLS_TRUSTSTORE_PASSWORD), user,
+                    password, token);
+            // The client only logs a warning and trusts nothing when the store cannot be read.
+            if (config.getCertificateBytes() == null || config.getCertificateBytes().length == 0) {
+                throw new ValidationException("No trusted certificate could be read from '" + truststore
+                        + "' (option '" + TLS_TRUSTSTORE.key() + "'; check the file and its password).");
+            }
+        }
         options.getOptional(DEFAULT_SCHEMA).ifPresent(config::setDefaultSchema);
-        options.getOptional(KERBEROS_PRINCIPAL).ifPresent(config::setKerberosServicePrincipal);
+        String principal = options.getOptional(KERBEROS_PRINCIPAL).orElse(null);
+        if (principal != null) {
+            if (!tls) {
+                throw new ValidationException("Option '" + KERBEROS_PRINCIPAL.key() + "' needs '" + TLS.key()
+                        + "' = 'true': Kerberos authentication is only offered over TLS.");
+            }
+            if (password != null || token != null) {
+                throw new ValidationException("Set either '" + KERBEROS_PRINCIPAL.key() + "' or a password/token, "
+                        + "not both.");
+            }
+            config.setKerberosServicePrincipal(principal);
+        }
         config.setConnectTimeoutMs(options.get(CONNECT_TIMEOUT).toMillis());
         config.setMaxRetries(retries);
         return config;
