@@ -106,12 +106,54 @@ class FlightSourceIntegrationTest {
     }
 
     @Test
+    void pushedFiltersGiveTheSameAnswers() throws Exception {
+        long n = TestServer.NUMBERS;
+        // n in [0, NUMBERS), m = n % 7: the expected answers are computed here.
+        assertEquals(List.of(Row.of(100L, 1L)), query("SELECT count(*), min(n) FROM numbers"
+                + " WHERE n >= 1 AND n <= 100"));
+        assertEquals(List.of(Row.of(n / 7 + (n % 7 > 3 ? 1 : 0))),
+                query("SELECT count(*) FROM numbers WHERE m = 3"));
+        assertEquals(List.of(Row.of(5L)), query("SELECT count(*) FROM numbers WHERE n IN (1, 2, 3, 70000, -5)"
+                + " OR (n > 99990 AND m = 0)"));
+        assertEquals(List.of(Row.of(2L)), query("SELECT count(*) FROM numbers WHERE 99998 <= n"));
+        // a filter the source cannot take (expression on a column) stays in Flink next to pushed ones
+        assertEquals(List.of(Row.of(30L)), query("SELECT count(*) FROM numbers WHERE n < 100 AND MOD(n, 7) = m"
+                + " AND m < 2"));
+        assertTrue(explain("SELECT n FROM numbers WHERE n > 5 AND m <> 2").contains("filter=["));
+    }
+
+    @Test
+    void pushedFiltersOnEveryTranslatedTypeAndNulls() throws Exception {
+        assertEquals(List.of(Row.of(1)), query("SELECT id FROM types WHERE b AND ti = 7 AND si < 301 AND bi > 1"
+                + " AND `dec` = 12345.67 AND s LIKE 'h%' AND s LIKE '%llo' AND s LIKE '%éll%' AND s = 'héllo'"
+                + " AND dt = DATE '2024-02-29' AND ts > TIMESTAMP '2024-02-29 13:45:30.123455'"));
+        // three-valued logic: the all-null row matches neither a predicate nor its negation
+        assertEquals(List.of(), query("SELECT id FROM types WHERE NOT (ti = 7)"));
+        assertEquals(List.of(Row.of(2)), query("SELECT id FROM types WHERE ti IS NULL AND s IS NULL"));
+        assertEquals(List.of(Row.of(1)), query("SELECT id FROM types WHERE NOT b IS NULL"));
+        // double/float filters stay in Flink and still filter
+        assertEquals(List.of(Row.of(1)), query("SELECT id FROM types WHERE d > 2.0 AND f < 2.0"));
+    }
+
+    @Test
+    void pushedLimitKeepsTheRequestedRowCount() throws Exception {
+        assertEquals(5, query("SELECT n FROM numbers LIMIT 5").size());
+        assertEquals(3, query("SELECT n FROM numbers WHERE m = 1 LIMIT 3").stream()
+                .filter(r -> (Long) r.getField(0) % 7 == 1).count());
+        assertTrue(explain("SELECT n FROM numbers LIMIT 5").contains("limit=[5]"));
+    }
+
+    @Test
     void failsInsteadOfNarrowingAValueThatDoesNotFit() {
         // bi is BIGINT on the server and holds 9 000 000 000: declared as INT the read must fail, not wrap.
         env.executeSql("CREATE TABLE narrow (bi INT) WITH (" + with(server.options("SELECT bi FROM sparrow.types"))
                 + ")");
         Exception e = assertThrows(Exception.class, () -> query("SELECT * FROM narrow"));
         assertTrue(rootMessage(e).contains("out of range"), rootMessage(e));
+    }
+
+    private static String explain(String sql) {
+        return env.explainSql(sql);
     }
 
     private static String rootMessage(Throwable t) {

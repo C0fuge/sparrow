@@ -17,7 +17,20 @@ WITH (
 How it reads: when the job starts, the split enumerator (job manager) plans the query on the server
 (`GetFlightInfo`); every returned endpoint becomes one split (in `partial` result mode one per server node),
 and the subtasks read the splits in parallel. Each endpoint's locations are tried in order (primary, then the
-backup locations) by the client core when a stream is opened. Selected columns are pushed into the server SQL.
+backup locations) by the client core when a stream is opened. Selected columns, filters and `LIMIT` are pushed
+into the server SQL (see below).
+
+## Pushdown
+
+- Projection: only the selected columns are read.
+- Filters: column-vs-literal comparisons (`=`, `<>`, `<`, `<=`, `>`, `>=`), `IN` lists, `IS [NOT] NULL`, bare
+  BOOLEAN columns, `LIKE 'abc%'` / `'%abc'` / `'%abc%'` (no other wildcards, no backslash, no `ESCAPE`), and
+  `AND` / `OR` / `NOT` of those, on TINYINT..BIGINT, DECIMAL, VARCHAR/STRING, BOOLEAN, DATE and TIMESTAMP
+  (microsecond literals) columns. Everything else - FLOAT/DOUBLE (NaN ordering differs between Flink and the
+  server), TIME, TIMESTAMP_LTZ, CHAR, binary types, casts, functions, column-vs-column - stays in Flink, so
+  answers are the same with and without pushdown.
+- Limit: `LIMIT n` is appended to the server query; Flink keeps its own limit on top (in `partial` mode each
+  node may return up to `n` rows).
 
 ## Options
 

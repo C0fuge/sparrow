@@ -5,13 +5,10 @@
 N1. **Apache Flink connector (native).** Done so far (step 1, see `docs/flink.md`): `arrow-flight` table factory,
     FLIP-27 `FlightSource` (enumerator plans on job start, one split per endpoint, splits pulled on request),
     `FlightSplitReader` via `EndpointReader.forEndpoint` (client-core retries + backup locations), checked
-    Arrow -> `GenericRowData` conversion for scalar types, projection pushdown, MiniCluster tests. Remaining, in order:
-    - **N1b next:** filter pushdown (`SupportsFilterPushDown`: translate Flink `ResolvedExpression` comparisons /
-      AND / OR / IS NULL / IN / LIKE on columns + literals to client-core `Expr`, render with `SqlRenderer`, pass the
-      WHERE to `TableScan.probe`; return unsupported ones as remaining) and limit pushdown (`SupportsLimitPushDown`:
-      append `LIMIT n`; Flink keeps its own Limit on top). Tests: generated SQL (unit) + answers equal with and
-      without pushdown (MiniCluster).
-    - N1c: `FlightCatalog` (+ `CatalogFactory` `arrow-flight`): databases = server schemas, tables from Flight SQL
+    Arrow -> `GenericRowData` conversion for scalar types, projection pushdown, MiniCluster tests; N1b filter
+    pushdown (`FilterTranslator`: only types/operators with identical semantics in Flink and DuckDB) and limit
+    pushdown. Remaining, in order:
+    - **N1c next:** `FlightCatalog` (+ `CatalogFactory` `arrow-flight`): databases = server schemas, tables from Flight SQL
       `GetTables`/`GetColumns`, Arrow -> Flink type mapping (reuse/extend `ArrowRowConverter` rules).
     - N1d: multi-endpoint + failover test: two in-process servers / partial mode (see how the server's tests run a
       cluster), kill the primary location of an endpoint, answers stay equal.
@@ -49,3 +46,7 @@ N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow 
   SpotBugs, `ci.yml` (Maven cache + server artifacts cached by ref). CI 40691138388 green. N1 step 1 (table source,
   projection pushdown, 25 tests incl. MiniCluster) — CI 40692468363 green. Tests generate their Parquet with DuckDB
   (server test classpath); partial mode needs `schema.table` names (a `table` option `SELECT ...` works).
+- 2026-10-28: N1b done — filter pushdown (`FilterTranslator` -> client-core `Expr`/`SqlRenderer`; FLOAT/DOUBLE,
+  TIME, TIMESTAMP_LTZ, CHAR, nanosecond timestamps, LIKE with `_`/inner `%`/backslash stay in Flink) and limit
+  pushdown; 34 tests (MiniCluster answers checked against values computed from the generated data, EXPLAIN shows
+  `filter=[...]` / `limit=[5]`). CI RUNID.
