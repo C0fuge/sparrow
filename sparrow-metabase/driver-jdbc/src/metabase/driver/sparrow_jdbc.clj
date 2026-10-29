@@ -3,8 +3,8 @@
   the JDBC route the native `:sparrow` driver replaces. A `:sql-jdbc` driver (pooled JDBC connections, sync from
   `DatabaseMetaData`, rows read through `ResultSet`s) whose SQL is compiled by the `:sparrow` driver, so both drivers
   send the server the same SQL and a comparison measures only the transport. Values are inlined (the server rejects
-  bound parameters), so queries run as plain JDBC statements. Planned in the server's default result mode (no
-  `x-flight-result-mode` header): a single-node server only."
+  bound parameters), so queries run as plain JDBC statements. Planned in complete result mode like the native driver:
+  the JDBC driver sends connection properties it does not know as call headers (`x-flight-result-mode`)."
   (:require
    [clojure.string :as str]
    [metabase.driver :as driver]
@@ -33,13 +33,15 @@
   (cond-> {:classname     "org.apache.arrow.driver.jdbc.ArrowFlightJdbcDriver"
            :subprotocol   "arrow-flight-sql"
            :subname       (str "//" host ":" (or port 8815))
-           :useEncryption "false"}
+           :useEncryption "false"
+           ;; sent as a header on every call; the server's default (partial) only plans single-table queries
+           :x-flight-result-mode "complete"}
     (not (str/blank? token)) (assoc :token token)))
 
 (defmethod driver/can-connect? :sparrow-jdbc
   [driver details]
-  ;; `SELECT 1` as a plain statement: the server's CreatePreparedStatement only plans queries over a table, and the
-  ;; `:sql-jdbc` default runs the test query as a prepared statement
+  ;; `SELECT 1` as a plain statement (the `:sql-jdbc` default prepares it, the server prepares only queries over a
+  ;; table)
   (let [{:keys [subprotocol subname], :as spec} (sql-jdbc.conn/connection-details->spec driver details)
         props (Properties.)]
     (doseq [[k v] (dissoc spec :classname :subprotocol :subname)]
