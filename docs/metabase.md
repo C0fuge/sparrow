@@ -90,4 +90,14 @@ Two parts:
   columns, date and timestamptz filters, distinct/median/percentile, a join with a sum by city, string filters
   (`%`/`_` in values, case-insensitive), native queries with number/text/date tags, an optional clause, a
   quote in a value and field filters (date range, several values).
-- Next: a larger TPC-H-shaped question set, then a comparison with the JDBC-based community driver.
+- Speed comparison (`driver/test/perf.py`, only in a `workflow_dispatch` run of `ci.yml` with `metabase_perf`):
+  the JDBC route as baseline - `sparrow-metabase/driver-jdbc` (`:sparrow-jdbc`, perf only, not shipped) is a
+  `:sql-jdbc` driver over the Arrow Flight SQL JDBC driver 19.0.0 (pooled connections, sync from
+  `DatabaseMetaData`, rows through `ResultSet`s), whose SQL is compiled by the `:sparrow` driver (MBQL and native
+  parameter substitution delegated), so both drivers send the server the same SQL and the comparison measures the
+  transport only. It plans in the server's default result mode (no `x-flight-result-mode` header), so it is only
+  valid against a single node. `SmokeServer` started with perf rows also writes `perf.lineitem` (TPC-H lineitem
+  columns and domains, 6 M rows = SF 1, hash-based values, four files). Both databases are added to the same
+  Metabase; each question runs once as warm-up (answers of both drivers must be equal, the row count must match)
+  and then 5 times alternating the drivers; median wall time through Metabase's API (`/api/dataset`, CSV
+  downloads via `/api/dataset/csv`). Results in `STATUS.md` (Log) and the run's job summary.
