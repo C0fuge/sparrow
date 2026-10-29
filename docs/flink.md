@@ -21,6 +21,26 @@ backup locations) until one returns the first batch, in up to `max-retries` + 1 
 between rounds; once rows were emitted a failure fails the read (a new stream would replay them).
 Selected columns, filters and `LIMIT` are pushed into the server SQL (see below).
 
+## Deployment
+
+`./mvnw package` builds `sparrow-flink/target/sparrow-flink-<version>-shaded.jar` (about 32 MB): the connector,
+the server's client core and their dependencies, with Arrow, gRPC, Netty, Protobuf/Guava/Gson (`com.google`),
+Jackson, BouncyCastle and Apache Commons relocated under `sparrow.flink.shaded`, so they cannot clash with the
+versions in Flink, Hadoop or other connectors. Flink itself and slf4j are not in the jar (the cluster provides
+them; `flink-connector-base` comes with `flink-dist`). Put it into Flink's `lib/`, or load it per session:
+
+```sql
+ADD JAR '/path/to/sparrow-flink-0.1.0-SNAPSHOT-shaded.jar';
+CREATE CATALOG flight WITH ('type' = 'arrow-flight', ...);
+```
+
+The jar has no native code: TLS uses the JDK's provider (netty-tcnative is left out) and Netty uses NIO (no
+epoll). Netty system properties are relocated with the classes (`sparrow.flink.shaded.io.netty.*`). The cluster
+must run on Java 21 (client core) with the `--add-opens` Flink sets by default for Java 17+
+(`java.base/java.nio`, needed by Arrow). `ShadedJarIT` (run by `./mvnw verify` after packaging) checks the jar
+contents and reads a table and a catalog over TLS from a class path without the connector, the jar added with
+`ADD JAR`.
+
 ## Catalog
 
 ```sql

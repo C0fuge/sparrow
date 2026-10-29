@@ -110,4 +110,92 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+    <build>
+        <plugins>
+            <!-- sparrow-flink-<version>-shaded.jar: the connector with its dependencies for Flink's lib/ or ADD JAR.
+                 Third-party packages are relocated under sparrow.flink.shaded so they cannot clash with the
+                 versions of Flink, Hadoop or other connectors. Flink and slf4j are left out (provided by the
+                 cluster; flink-dist bundles flink-connector-base through flink-connector-files). netty-tcnative is
+                 left out: gRPC then uses the JDK's TLS (ALPN since Java 9) and the jar carries no native code
+                 to rename (Netty's epoll libraries are dropped too, so it uses NIO). Annotation-only artifacts are left out (not needed at run time). -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <phase>package</phase><goals><goal>shade</goal></goals>
+                        <configuration>
+                            <shadedArtifactAttached>true</shadedArtifactAttached>
+                            <shadedClassifierName>shaded</shadedClassifierName>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <artifactSet>
+                                <excludes>
+                                    <exclude>org.apache.flink:*:*</exclude>
+                                    <exclude>org.slf4j:*</exclude>
+                                    <exclude>io.netty:netty-tcnative-boringssl-static</exclude>
+                                    <exclude>io.netty:netty-tcnative-classes</exclude>
+                                    <exclude>com.google.code.findbugs:jsr305</exclude>
+                                    <exclude>javax.annotation:javax.annotation-api</exclude>
+                                    <exclude>org.checkerframework:checker-qual</exclude>
+                                    <exclude>com.google.errorprone:error_prone_annotations</exclude>
+                                    <exclude>com.google.j2objc:j2objc-annotations</exclude>
+                                    <exclude>org.codehaus.mojo:animal-sniffer-annotations</exclude>
+                                    <exclude>com.google.guava:listenablefuture</exclude>
+                                </excludes>
+                            </artifactSet>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheLicenseResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ApacheNoticeResourceTransformer"/>
+                            </transformers>
+                            <relocations>
+                                <relocation><pattern>org.apache.arrow</pattern><shadedPattern>sparrow.flink.shaded.org.apache.arrow</shadedPattern></relocation>
+                                <relocation><pattern>io.grpc</pattern><shadedPattern>sparrow.flink.shaded.io.grpc</shadedPattern></relocation>
+                                <relocation><pattern>io.netty</pattern><shadedPattern>sparrow.flink.shaded.io.netty</shadedPattern></relocation>
+                                <relocation><pattern>io.perfmark</pattern><shadedPattern>sparrow.flink.shaded.io.perfmark</shadedPattern></relocation>
+                                <!-- protobuf, common protos, guava, gson, flatbuffers -->
+                                <relocation><pattern>com.google</pattern><shadedPattern>sparrow.flink.shaded.com.google</shadedPattern></relocation>
+                                <relocation><pattern>com.fasterxml.jackson</pattern><shadedPattern>sparrow.flink.shaded.com.fasterxml.jackson</shadedPattern></relocation>
+                                <relocation><pattern>org.bouncycastle</pattern><shadedPattern>sparrow.flink.shaded.org.bouncycastle</shadedPattern></relocation>
+                                <relocation><pattern>org.apache.commons</pattern><shadedPattern>sparrow.flink.shaded.org.apache.commons</shadedPattern></relocation>
+                            </relocations>
+                            <filters>
+                                <filter><artifact>*:*</artifact><excludes>
+                                    <exclude>META-INF/*.SF</exclude>
+                                    <exclude>META-INF/*.DSA</exclude>
+                                    <exclude>META-INF/*.RSA</exclude>
+                                    <!-- the jar is not multi-release: Java 9+ variants would only be dead copies -->
+                                    <exclude>META-INF/versions/**</exclude>
+                                    <!-- epoll libraries: under relocation Netty would look for renamed ones; NIO is used -->
+                                    <exclude>META-INF/native/**</exclude>
+                                    <exclude>META-INF/proguard/**</exclude>
+                                    <exclude>android/**</exclude>
+                                    <exclude>module-info.class</exclude>
+                                    <exclude>META-INF/maven/**</exclude>
+                                    <exclude>META-INF/native-image/**</exclude>
+                                </excludes></filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- *IT: tests of the packaged shaded jar. Their class path has no connector classes (the main
+                 classes directory is replaced by an empty one); the jar is added with ADD JAR. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals><goal>integration-test</goal><goal>verify</goal></goals>
+                        <configuration>
+                            <classesDirectory>${project.build.directory}/no-classes</classesDirectory>
+                            <systemPropertyVariables>
+                                <sparrow.shaded.jar>${project.build.directory}/${project.build.finalName}-shaded.jar</sparrow.shaded.jar>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
 </project>
