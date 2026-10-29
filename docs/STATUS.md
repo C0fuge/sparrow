@@ -231,3 +231,10 @@ Open questions for the maintainer.
   Postgres semantics). 17 new smoke checks with answers computed in `smoke.py` (both directions of every diff,
   zoneinfo for the zones), SQL cross-checked locally against DuckDB. CI 40877446820 green (all three jobs, 46
   smoke checks). TPC-H-shaped questions in the smoke test left out (N3d's perf run already checks equal answers).
+- 2026-10-29: N1 follow-up done — perf baseline on Flink 2.x: `-Pflink2` now uses `flink-connector-jdbc-core`
+  4.1.0-2.2 (the 2.x release; same test sources compile). Found: with it, Flink 2.3 plans TPC-H Q19 for the JDBC
+  tables with a recursion deeper than the default 1 MB thread stack and the test JVM dies with SIGSEGV (exit
+  139, no hs_err; before any JDBC query is sent; 3.3.0-1.20 on 2.3 and 1.20 are fine) - `-Pperf` adds
+  `-Xss16m` to the test JVMs (`perf.argLine`). `TpchPerfTest` on 2.x, SF 0.1, local 4 cores: all 69 answers
+  equal DuckDB's; totals native/jdbc/jdbc-part 55.6/52.5/55.4 s (scan 3.19/3.47/3.57) - at SF 0.1 Flink's
+  per-job overhead dominates, no SF 1 run on 2.x. CI 40880572774 green (all three jobs). SPARROW DONE.
