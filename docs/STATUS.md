@@ -125,4 +125,4 @@ N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow 
   questions). SF 1, local 4 cores, one run, wall s native/jdbc/jdbc-part: scan 17.0/26.5/21.6 (jdbc 1.56x,
   jdbc-part 1.27x slower), 22 queries 253/268/270 (1.06x; Q1 14.1/17.2/16.9, Q9 99.8/102.4/103.2 - joins in
   Flink dominate; the in-process nodes run DuckDB with 1 thread). Flink's SUM(INT) keeps INT and overflows at
-  SF 1 (the scan probe casts). 94 tests (+3). CI RUNID.
+  SF 1 (the scan probe casts). 94 tests (+3). CI 40797950700 green.
