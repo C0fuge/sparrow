@@ -120,6 +120,11 @@ class FlightLookupFunctionTest {
             public DynamicTableSource.DataStructureConverter createDataStructureConverter(DataType producedDataType) {
                 throw new UnsupportedOperationException();
             }
+
+            // Abstract in Flink 2.x, absent in 1.20: no @Override so the test compiles against both.
+            public boolean preferCustomShuffle() {
+                return false;
+            }
         };
     }
 }
