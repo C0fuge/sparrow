@@ -38,13 +38,11 @@ N3. **next:** **Metabase native driver**: a Metabase driver (Clojure) that uses 
     container: sync + native and GUI-built queries, answers checked; speed vs the JDBC-based community driver.
     Plan and state: `docs/metabase.md`. Done: N3a Java bridge, N3b driver skeleton + CI smoke job, N3c answers
     checked on real queries (date bucketing, joins, distinct/percentile, string filters, native template tags;
-    see Log).
-    Next step (N3d): speed comparison with the JDBC-based route (Metabase with the Arrow Flight SQL JDBC driver,
-    as the Flink perf baseline used it; it needs bound parameters inlined, see Open questions): same questions
-    through Metabase's API on a larger data set (e.g. `TpchData`-shaped SF 0.1/1 in `SmokeServer`), wall time
-    per question, `perf`-style (local or a `workflow_dispatch`-only CI job, not on every push). Follow-ups, none
-    blocking: `datetime-diff`, `convert-timezone`, `regex` (switched off now) with DuckDB's `date_diff`,
-    `timezone`, `regexp_extract`; a TPC-H-shaped question set in the smoke test.
+    see Log), N3d speed comparison (see Log).
+    Next step (N3e, finish mode): the follow-ups switched off so far, each with smoke checks whose answers
+    `smoke.py` computes: `regex` (`regexp_extract`), `datetime-diff` (`date_diff`, Metabase's whole-unit
+    semantics), `convert-timezone` (`timezone`); optionally a few TPC-H-shaped questions on `perf.lineitem` in
+    the smoke test (small row count). Then the Flink 2.x perf-baseline follow-up of N1, then "SPARROW DONE".
 
 ## Open questions
 
@@ -73,6 +71,11 @@ N3. **next:** **Metabase native driver**: a Metabase driver (Clojure) that uses 
   pushed-down filter value and partition bound, so stock Flink JDBC (and BI tools that bind parameters) cannot
   read from the server; the perf baseline inlines them in a wrapper driver (`InliningFlightSqlDriver`). Does the
   server want to support `DoPut` parameter binding for prepared statements? (maintainer → server repo)
+- Default result mode and table-less SQL: without `x-flight-result-mode` the server plans in partial mode, which
+  refuses SQL without exactly one table (`SELECT 1`: "Can only select from ONE table"); `CreatePreparedStatement`
+  refuses it in any mode. Generic JDBC clients (Metabase's `sql-jdbc` connection test, pool test queries) fail on
+  this. Should the server answer such queries in complete mode on its own? Not blocking: the native driver always
+  sends `complete` (maintainer → server repo)
 - Streaming mode: a bounded source restored from a checkpoint with a half-read split fails (Flight streams are
   not resumable and their row order is not guaranteed). Is batch-only acceptable, or do we need a resumable
   ticket (row offset) from the server? (maintainer)
@@ -205,3 +208,18 @@ N3. **next:** **Metabase native driver**: a Metabase driver (Clojure) that uses 
   expected answers computed in `smoke.py` from the generating formulas (checked locally against DuckDB): 24
   new checks (8 temporal breakouts, date/timestamptz filters, distinct/median/percentile, join, 6 string
   filters, 5 native queries with tags). CI 40843975383 green (all three jobs, 29 smoke checks).
+- 2026-10-29: N3d done — speed comparison of the native Metabase driver with the JDBC route. Baseline
+  `sparrow-metabase/driver-jdbc` (`:sparrow-jdbc`, perf only, not shipped): `:sql-jdbc` driver over the Arrow
+  Flight SQL JDBC driver 19.0.0 whose SQL is compiled by `:sparrow` (same SQL to the server, so only the
+  transport differs). Found: the server refuses table-less SQL (`SELECT 1`) in its default (partial) result mode
+  and in `CreatePreparedStatement`; the baseline sends `x-flight-result-mode: complete` as a JDBC connection
+  property (the JDBC driver forwards unknown properties as call headers) and tests connections with a plain
+  statement. `SmokeServer` takes a `perf.lineitem` row count (TPC-H lineitem shape, 6 M rows = SF 1, four
+  files); `perf.py` runs 8 questions through Metabase's API on both databases (warm-up answers must be equal),
+  median of 5 alternating runs. Only in `workflow_dispatch` runs with `metabase_perf` (both drivers + perf
+  step); push runs unchanged. CI 40861785290 green (all three jobs), SF 1, s native/JDBC: count 0.053/0.055,
+  TPC-H Q1 (native) 0.350/0.348, count by month 0.344/0.350, sum by ship mode 0.144/0.155, distinct 0.141/0.159,
+  2000-row table view 0.156/0.181 (1.15x), CSV 100 k rows 0.572/0.669 (1.17x), CSV 1 M rows x 13 columns
+  7.35/8.42 (1.15x). Aggregations are server-bound (equal); row transfer is 13-17 % faster natively (the rest of a large
+  download is presumably Metabase's own row processing and CSV writing; not profiled). Earlier dispatches 40859930805,
+  40860388753, 40861125149 red (deps.edn insertion, `SELECT 1` refused). Bridge tests 17 (+1, `perf.lineitem`).

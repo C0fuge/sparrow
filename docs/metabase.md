@@ -95,8 +95,9 @@ Two parts:
   `:sql-jdbc` driver over the Arrow Flight SQL JDBC driver 19.0.0 (pooled connections, sync from
   `DatabaseMetaData`, rows through `ResultSet`s), whose SQL is compiled by the `:sparrow` driver (MBQL and native
   parameter substitution delegated), so both drivers send the server the same SQL and the comparison measures the
-  transport only. It plans in the server's default result mode (no `x-flight-result-mode` header), so it is only
-  valid against a single node. `SmokeServer` started with perf rows also writes `perf.lineitem` (TPC-H lineitem
+  transport only. It plans in complete result mode like the native driver (`x-flight-result-mode` as a JDBC
+  connection property, which the JDBC driver sends as a call header; the default partial mode refuses `SELECT 1`)
+  and tests connections with a plain statement (the server does not prepare table-less SQL). `SmokeServer` started with perf rows also writes `perf.lineitem` (TPC-H lineitem
   columns and domains, 6 M rows = SF 1, hash-based values, four files). Both databases are added to the same
   Metabase; each question runs once as warm-up (answers of both drivers must be equal, the row count must match)
   and then 5 times alternating the drivers; median wall time through Metabase's API (`/api/dataset`, CSV
