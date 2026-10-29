@@ -12,4 +12,16 @@
             <Class name="sparrow.flink.FlightCatalog"/>
         </Or>
     </Match>
+    <!--
+      AT_*: QueryResult is read by one thread; only cancel() may run on another (Metabase's cancel channel),
+      which touches nothing but the volatile `cancelled` flag and the volatile stream. The row counters are
+      reader-thread state.
+    -->
+    <Match>
+        <Class name="sparrow.metabase.QueryResult"/>
+        <Or>
+            <Bug pattern="AT_NONATOMIC_OPERATIONS_ON_SHARED_VARIABLE"/>
+            <Bug pattern="AT_STALE_THREAD_WRITE_OF_PRIMITIVE"/>
+        </Or>
+    </Match>
 </FindBugsFilter>

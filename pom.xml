@@ -12,6 +12,7 @@
 
     <modules>
         <module>sparrow-flink</module>
+        <module>sparrow-metabase</module>
     </modules>
 
     <properties>
