@@ -4,7 +4,8 @@
 Sets Metabase up, adds the in-process test server (sparrow-metabase SmokeServer) as a `sparrow` database, waits for
 the sync, then checks the synced tables and fields and the answers of native and GUI-built (MBQL) queries: date
 bucketing and extraction on DATE, TIMESTAMP and TIMESTAMP WITH TIME ZONE columns, joins, distinct counts,
-percentiles, string filters and native queries with template tags. The expected answers of the `shop` tables are
+percentiles, string filters, native queries with template tags, and regexExtract, datetimeDiff and
+convertTimezone expressions. The expected answers of the `shop` tables are
 computed here from the formulas that generated them (`TestServer`), not by the server.
 
 Usage: smoke.py <metabase-url> <flight-port>
@@ -18,6 +19,7 @@ from decimal import Decimal
 import time
 import urllib.error
 import urllib.request
+from zoneinfo import ZoneInfo
 
 BASE = sys.argv[1].rstrip("/")
 PORT = int(sys.argv[2])
@@ -54,6 +56,37 @@ def percentile_cont(values, p):
 def sunday_week(d):
     """Start (Sunday) of the week of date `d`: Metabase's default start of week."""
     return d - datetime.timedelta(days=(d.weekday() + 1) % 7)
+
+
+def trunc_div(a, b):
+    """Integer `a / b` truncated toward zero."""
+    q = abs(a) // b
+    return q if a >= 0 else -q
+
+
+def diff_months(x, y):
+    """Whole months from date `x` to date `y` as Metabase's datetimeDiff defines them (Postgres' `age`)."""
+    m = (y.year - x.year) * 12 + y.month - x.month
+    if m > 0 and y.day < x.day:
+        m -= 1
+    elif m < 0 and y.day > x.day:
+        m += 1
+    return m
+
+
+def datetime_diff(x, y, unit):
+    """Metabase's datetimeDiff(x, y, unit) for dates/datetimes: whole units, truncated toward zero; year to day on
+    the dates, hour to second on the instants."""
+    def as_dt(v):
+        return v if isinstance(v, datetime.datetime) else datetime.datetime.combine(v, datetime.time())
+    dx = x.date() if isinstance(x, datetime.datetime) else x
+    dy = y.date() if isinstance(y, datetime.datetime) else y
+    if unit in ("year", "quarter", "month"):
+        return trunc_div(diff_months(dx, dy), {"year": 12, "quarter": 3, "month": 1}[unit])
+    if unit in ("week", "day"):
+        return trunc_div((dy - dx).days, 7 if unit == "week" else 1)
+    micros = (as_dt(y) - as_dt(x)) // datetime.timedelta(microseconds=1)
+    return trunc_div(micros, {"hour": 3600, "minute": 60, "second": 1}[unit] * 1000000)
 
 
 def as_int_rows(rows):
@@ -219,6 +252,8 @@ def shop_checks(db_id, tables):
     got = [[r[0], Decimal(str(r[1])).quantize(Decimal("0.01"))] for r in rows]
     check("join, sum by city", got == expected, (rows, expected))
 
+    function_checks(mbql, f, data)
+
     def count_where(flt):
         return int(mbql({"aggregation": [["count"]], "filter": flt})[0][0])
 
@@ -269,6 +304,55 @@ def shop_checks(db_id, tables):
                     "value": ["open", "returned"]}])
     expected = sum(1 for r in data if r["status"] in ("open", "returned"))
     check("native field filter (several values)", as_int_rows(rows) == [[expected]], (rows, expected))
+
+
+def function_checks(mbql, f, data):
+    """regexExtract, datetimeDiff and convertTimezone in custom expressions (MBQL)."""
+    note, status = ["field", f["note"], None], ["field", f["status"], None]
+
+    # without a group the whole match; with a group its first group; NULL (not '') without a match
+    rows = mbql({"expressions": {"p": ["regex-match-first", status, "[a-z]{2}$"]},
+                 "aggregation": [["count"]], "breakout": [["expression", "p"]]})
+    expected = sorted(Counter(r["status"][-2:] for r in data).items())
+    check("regexExtract without group", [[r[0], int(r[1])] for r in rows] == [list(e) for e in expected],
+          (rows, expected))
+    rows = mbql({"expressions": {"n": ["regex-match-first", note, "^Note ([0-9]+)$"]},
+                 "aggregation": [["count"]], "filter": ["=", ["expression", "n"], "99"]})
+    check("regexExtract first group", as_int_rows(rows) == [[1]], rows)
+    rows = mbql({"expressions": {"n": ["regex-match-first", note, "^Note ([0-9]+)$"]},
+                 "aggregation": [["count"]], "filter": ["is-null", ["expression", "n"]]})
+    expected = sum(1 for r in data if not r["note"].startswith("Note "))
+    check("regexExtract NULL without match", as_int_rows(rows) == [[expected]], (rows, expected))
+
+    # sums over all rows of datetimeDiff against fixed points, both directions (the end of February and January
+    # 31st exercise the day-of-month rule of months)
+    day_ref, ts_ref = datetime.date(2024, 2, 29), datetime.datetime(2024, 1, 31, 12, 30, 15)
+    cases = [("order_date", "order_date", day_ref, "2024-02-29", u) for u in ("year", "quarter", "month", "week", "day")]
+    cases += [("created_at", "created_at", ts_ref, "2024-01-31T12:30:15", u)
+              for u in ("month", "day", "hour", "minute", "second")]
+    cases += [("created_tz", "created_at", ts_ref, "2024-01-31T12:30:15", u) for u in ("day", "hour")]
+    for column, key, ref, literal, unit in cases:
+        col = ["field", f[column], None]
+        rows = mbql({"expressions": {"a": ["datetime-diff", col, literal, unit],
+                                     "b": ["datetime-diff", literal, col, unit]},
+                     "aggregation": [["sum", ["expression", "a"]], ["sum", ["expression", "b"]]]})
+        total = sum(datetime_diff(r[key], ref, unit) for r in data)
+        check(f"datetimeDiff {column} {unit}", as_int_rows(rows) == [[total, -total]], (rows, total))
+
+    # TIMESTAMP WITH TIME ZONE to a zone's wall clock; a plain TIMESTAMP read in a source zone, shown in another
+    tokyo, new_york = ZoneInfo("Asia/Tokyo"), ZoneInfo("America/New_York")
+    utc = datetime.timezone.utc
+    for label, expression, convert in [
+            ("TIMESTAMP WITH TIME ZONE to Asia/Tokyo",
+             ["convert-timezone", ["field", f["created_tz"], None], "Asia/Tokyo"],
+             lambda t: t.replace(tzinfo=utc).astimezone(tokyo)),
+            ("TIMESTAMP from America/New_York to Asia/Tokyo",
+             ["convert-timezone", ["field", f["created_at"], None], "Asia/Tokyo", "America/New_York"],
+             lambda t: t.replace(tzinfo=new_york).astimezone(tokyo))]:
+        rows = mbql({"expressions": {"t": expression, "h": ["get-hour", ["expression", "t"]]},
+                     "aggregation": [["count"]], "breakout": [["expression", "h"]]})
+        expected = sorted(Counter(convert(r["created_at"]).hour for r in data).items())
+        check(f"convertTimezone {label}", as_int_rows(rows) == [list(e) for e in expected], (rows, expected))
 
 
 if __name__ == "__main__":

@@ -14,12 +14,16 @@
    [metabase.driver.common :as driver.common]
    [metabase.driver.connection :as driver.conn]
    [metabase.driver.sql.query-processor :as sql.qp]
+   [metabase.driver.sql.query-processor.util :as sql.qp.u]
+   [metabase.driver.sql.util :as sql.u]
+   [metabase.util.date-2 :as u.date]
    [metabase.util.honey-sql-2 :as h2x]
    [metabase.util.log :as log])
   (:import
    (java.time LocalDateTime LocalTime OffsetDateTime OffsetTime)
    (java.time.format DateTimeFormatter)
    (java.util Map)
+   (java.util.regex Pattern PatternSyntaxException)
    (sparrow.metabase Column FlightSqlBridge QueryResult TableRef)))
 
 (set! *warn-on-reflection* true)
@@ -217,6 +221,113 @@
   [_driver _unit expr]
   (h2x/with-database-type-info [:to_timestamp expr] "timestamp with time zone"))
 
+;;; datetimeDiff: whole units from y back to x, truncated toward zero, as Metabase defines it (and Postgres computes
+;;; it): year/quarter/month/week/day on the dates (times ignored; months as Postgres' `age`, so Jan 31 -> Feb 28 is
+;;; 0 months, unlike DuckDB's `date_sub` which counts it as a full month), hour/minute/second on the instants.
+
+(defn- diff-date
+  "`expr` as a DATE (TIMESTAMP WITH TIME ZONE values by their UTC date)."
+  [expr]
+  (h2x/cast "date" (utc-wall-clock expr)))
+
+(defn- diff-timestamp
+  "`expr` as a plain TIMESTAMP (dates at midnight, TIMESTAMP WITH TIME ZONE values as UTC wall clock)."
+  [expr]
+  (if (tz? expr)
+    (utc-wall-clock expr)
+    (h2x/cast "timestamp" expr)))
+
+(defn- diff-months
+  "Whole months from date `x` to date `y`: calendar months, minus one if the day of month has not been reached yet
+  (plus one going backwards)."
+  [x y]
+  (let [months [:+ [:* [:- [:year y] [:year x]] [:inline 12]] [:- [:month y] [:month x]]]]
+    [:- months [:case
+                [:and [:> months [:inline 0]] [:< [:day y] [:day x]]] [:inline 1]
+                [:and [:< months [:inline 0]] [:> [:day y] [:day x]]] [:inline -1]
+                :else [:inline 0]]]))
+
+(defn- truncating-divide
+  "`a / b` truncated toward zero (DuckDB's integer `divide`)."
+  [a b]
+  [:divide a [:inline b]])
+
+(defn- as-bigint
+  "`expr` typed as BIGINT."
+  [expr]
+  (h2x/with-database-type-info expr "bigint"))
+
+(defmethod sql.qp/datetime-diff [:sparrow :year]
+  [_driver _unit x y]
+  (as-bigint (truncating-divide (diff-months (diff-date x) (diff-date y)) 12)))
+
+(defmethod sql.qp/datetime-diff [:sparrow :quarter]
+  [_driver _unit x y]
+  (as-bigint (truncating-divide (diff-months (diff-date x) (diff-date y)) 3)))
+
+(defmethod sql.qp/datetime-diff [:sparrow :month]
+  [_driver _unit x y]
+  (as-bigint (diff-months (diff-date x) (diff-date y))))
+
+(defmethod sql.qp/datetime-diff [:sparrow :week]
+  [_driver _unit x y]
+  (as-bigint (truncating-divide [:- (diff-date y) (diff-date x)] 7)))
+
+(defmethod sql.qp/datetime-diff [:sparrow :day]
+  [_driver _unit x y]
+  ;; DATE - DATE is a BIGINT number of days in DuckDB
+  (as-bigint [:- (diff-date y) (diff-date x)]))
+
+(doseq [unit [:hour :minute :second]]
+  (defmethod sql.qp/datetime-diff [:sparrow unit]
+    [_driver unit x y]
+    ;; date_sub counts complete units between the instants, truncated toward zero
+    (as-bigint [:date_sub (h2x/literal unit) (diff-timestamp x) (diff-timestamp y)])))
+
+;;; convertTimezone: DuckDB's `timezone(zone, x)` (ICU) has Postgres' semantics: a TIMESTAMP WITH TIME ZONE becomes
+;;; the wall clock in `zone`, a plain TIMESTAMP is read as wall clock in `zone`.
+
+(defmethod sql.qp/->honeysql [:sparrow :convert-timezone]
+  [driver [_ _opts arg target-timezone source-timezone]]
+  (let [expr         (sql.qp/->honeysql driver (cond-> arg (string? arg) u.date/parse))
+        timestamptz? (or (sql.qp.u/field-with-tz? arg) (tz? expr))
+        _            (sql.u/validate-convert-timezone-args timestamptz? target-timezone source-timezone)
+        ;; a DATE would be promoted with the server session's zone: make it a plain TIMESTAMP first
+        expr         (cond-> expr
+                       (or (instance? java.time.LocalDate expr)
+                           (h2x/database-or-effective-type-isa? expr "date" :type/Date))
+                       (h2x/cast "timestamp"))]
+    (h2x/with-database-type-info
+     [:timezone (h2x/literal target-timezone) (if timestamptz?
+                                                 expr
+                                                 [:timezone (h2x/literal source-timezone) expr])]
+     "timestamp")))
+
+;;; regexExtract: the first match, or its first capturing group if the pattern has one (as Postgres' `substring(x
+;;; FROM pattern)`), NULL without a match (DuckDB's `regexp_extract` alone returns ''). DuckDB uses RE2: no
+;;; lookaheads or lookbehinds.
+
+(defn- pattern-string
+  "The string of a regex pattern argument (a string or a `:value` clause), or nil."
+  [pattern]
+  (cond
+    (string? pattern)                                    pattern
+    (and (vector? pattern) (= :value (first pattern)))  (let [v (last pattern)] (when (string? v) v))))
+
+(defn- capturing-groups
+  "Number of capturing groups of `pattern` (0 if Java's regex syntax cannot parse it, e.g. RE2's `(?P<name>...)`)."
+  [^String pattern]
+  (try
+    (.groupCount (.matcher (Pattern/compile pattern) ""))
+    (catch PatternSyntaxException _ 0)))
+
+(defmethod sql.qp/->honeysql [:sparrow :regex-match-first]
+  [driver [_ _opts arg pattern]]
+  (let [text  (sql.qp/->honeysql driver arg)
+        regex (sql.qp/->honeysql driver pattern)
+        group (if (some-> (pattern-string pattern) capturing-groups pos?) 1 0)]
+    [:case [:regexp_matches text regex] [:regexp_extract text regex [:inline group]]]))
+
 ;; Literals DuckDB parses (Metabase's defaults write `timestamp with time zone '... +02:00'`, which DuckDB reads as a
 ;; zone name, and cut fractions to milliseconds).
 (def ^:private ^DateTimeFormatter timestamp-format (DateTimeFormatter/ofPattern "yyyy-MM-dd HH:mm:ss.SSSSSS"))
@@ -295,10 +406,11 @@
                               :database-routing                false
                               :connection-impersonation        false
                               :set-timezone                    false
-                              ;; not implemented (yet) for DuckDB: regexextract, datetimeDiff, convertTimezone
-                              :regex                           false
-                              :datetime-diff                   false
-                              :convert-timezone                false
+                              :regex                           true
+                              ;; RE2 on the server
+                              :regex/lookaheads-and-lookbehinds false
+                              :datetime-diff                   true
+                              :convert-timezone                true
                               :upload-with-auto-pk             false
                               :uploads                         false
                               :actions                         false

@@ -56,9 +56,20 @@ Two parts:
    - Native query parameters: `substitute-native-parameters-in-stage-method` runs the `:sql` substitution with
      `*compile-with-inline-parameters*`, so template tags and field filters become SQL literals. Anything left
      as a `?` argument is still refused, never run without its value.
-   - Features: `describe-fields`; no key constraints, uploads, actions, transforms, routing, impersonation,
-     `set-timezone`, `regex`, `datetime-diff` or `convert-timezone` (not implemented for DuckDB yet); the rest as
-     the `:sql` parent (joins, expressions, distinct, median/percentile via `percentile_cont`, window functions).
+   - Features: `describe-fields`; no key constraints, uploads, actions, transforms, routing, impersonation or
+     `set-timezone`; the rest as the `:sql` parent (joins, expressions, distinct, median/percentile via
+     `percentile_cont`, window functions), plus:
+     - `regex` (regexExtract): `CASE WHEN regexp_matches(x, p) THEN regexp_extract(x, p, g) END` - the first
+       capturing group if the pattern has one (as Postgres' `substring(x FROM p)`), else the whole match; NULL
+       without a match (`regexp_extract` alone returns ''). RE2 syntax: no lookaheads/lookbehinds
+       (`regex/lookaheads-and-lookbehinds` off). Groups are counted with Java's regex parser; a pattern it cannot
+       parse (RE2's `(?P<name>...)`) extracts the whole match.
+     - `datetime-diff`: Metabase's whole units truncated toward zero. year/quarter/month on the dates as Postgres'
+       `age` (months from year/month/day parts; DuckDB's `date_sub('month', ...)` counts Jan 31 -> Feb 28 as a
+       full month, so it is not used), week/day from `DATE - DATE`, hour/minute/second with `date_sub` on the
+       timestamps; TIMESTAMP WITH TIME ZONE as UTC wall clock.
+     - `convert-timezone`: DuckDB's `timezone(zone, x)` (ICU, Postgres semantics); a plain TIMESTAMP needs the
+       source zone, DATE values are cast to TIMESTAMP first.
    - Connection form: host, port (8815), user, password or token, default schema, TLS (verify, truststore and
      its password, Kerberos service principal), planning timeout and retries under advanced options.
 
