@@ -165,7 +165,7 @@ instead of the reserved alias `value`, key columns added to `ORDER BY` where tie
 `TpchPerfTest` (`perf` tag, local runs only: `./mvnw -Pperf test -pl sparrow-flink -Dtest=TpchPerfTest
 [-Dtpch.sf=1] [-Dtpch.queries=1,6]`) times the 22 queries through Flink SQL (batch mode, parallelism 2) on a
 two-node in-process cluster with three sources: the `arrow-flight` catalog (`native`), Flink's JDBC connector
-(`flink-connector-jdbc-core` 3.3) with the stock Arrow Flight SQL JDBC driver, one split per table (`jdbc`),
+(`flink-connector-jdbc-core` 3.3.0-1.20; 4.1.0-2.2 with `-Pflink2`) with the stock Arrow Flight SQL JDBC driver, one split per table (`jdbc`),
 and the same with the five large tables split into two key ranges (`jdbc-part`, `scan.partition.*`). Flink's
 JDBC connector has no dialect for `jdbc:arrow-flight-sql:` URLs, so the test registers one
 (`FlightSqlJdbcFactory`: DuckDB quoting and `LIMIT`); and the server rejects bound statement parameters,

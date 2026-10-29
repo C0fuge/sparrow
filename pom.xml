@@ -46,7 +46,8 @@
             --add-opens=java.base/java.lang=ALL-UNNAMED
             --add-opens=java.base/java.util=ALL-UNNAMED
             --add-opens=java.base/sun.util.calendar=ALL-UNNAMED
-            --add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED</test.argLine>
+            --add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED ${perf.argLine}</test.argLine>
+        <perf.argLine />
         <checkstyle.failOnViolation>true</checkstyle.failOnViolation>
     </properties>
 
@@ -184,6 +185,8 @@
             <properties>
                 <flink.version>2.3.0</flink.version>
                 <shaded.classifier>shaded-flink2</shaded.classifier>
+                <!-- perf baseline only (TpchPerfTest): the JDBC connector release for Flink 2.x -->
+                <flink-jdbc.version>4.1.0-2.2</flink-jdbc.version>
             </properties>
         </profile>
         <profile>
@@ -191,6 +194,9 @@
             <properties>
                 <groups>perf</groups>
                 <excludedGroups>real-services</excludedGroups>
+                <!-- TpchPerfTest's JDBC baseline on Flink 2.x (connector 4.1.0-2.2) plans Q19 with a recursion
+                     deeper than the default 1 MB thread stack: the JVM dies with SIGSEGV, no hs_err -->
+                <perf.argLine>-Xss16m</perf.argLine>
             </properties>
         </profile>
         <profile>

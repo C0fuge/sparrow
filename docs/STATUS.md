@@ -21,8 +21,7 @@ N1. **Apache Flink connector (native).** Done so far (step 1, see `docs/flink.md
     (`sparrow-flink-<version>-shaded.jar`, relocated deps, `ShadedJarIT` loads it with `ADD JAR`); N1j Flink 2.x
     (`-Pflink2` = Flink 2.3.0, same sources; CI matrix runs every test on 1.20 and 2.3). N1 is complete apart
     from these follow-ups, none blocking:
-    - Perf baseline on 2.x: `TpchPerfTest` uses `flink-connector-jdbc-core` 3.3.0-1.20 also under `-Pflink2`
-      (it compiles; the `perf` tag was not run on 2.x). Switch to the 2.x JDBC connector release if needed.
+    - Perf baseline on 2.x done 2026-10-29 (see Log); an SF 1 timing run on 2.x was not made (local, optional).
     - Open questions below (failover header, batch-only, bound parameters) wait for the maintainer.
     Goal (maintainer): `DynamicTableSource` (ScanTableSource) + `Catalog` over the server's metadata: one
     Flink split per Flight endpoint in partial mode (parallel readers, backup locations for failover), Arrow batches
@@ -39,7 +38,10 @@ N3. **next:** **Metabase native driver**: a Metabase driver (Clojure) that uses 
     Plan and state: `docs/metabase.md`. Done: N3a Java bridge, N3b driver skeleton + CI smoke job, N3c answers
     checked on real queries (date bucketing, joins, distinct/percentile, string filters, native template tags;
     see Log), N3d speed comparison (see Log), N3e `regex`, `datetime-diff`, `convert-timezone` (see Log).
-    Next step (finish mode): the Flink 2.x perf-baseline follow-up of N1, then "SPARROW DONE".
+    N3 is complete.
+
+SPARROW DONE (2026-10-29, finish mode): N1-N3 complete; what remains are the optional follow-ups above and the
+Open questions for the maintainer.
 
 ## Open questions
 
