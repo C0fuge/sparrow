@@ -28,8 +28,10 @@ N1. **Apache Flink connector (native).** Done so far (step 1, see `docs/flink.md
     into the server SQL, auth (token/basic, Kerberos as in the Spark connector), TLS. Flink 1.20 LTS first, then 2.x.
     Tests: Flink MiniCluster against the in-process server, TPC-H SF0.1/SF1 answers equal to DuckDB reading the files.
     Perf: Flink SQL TPC-H SF1 via the connector vs Flink's JDBC connector with the Flight SQL JDBC driver (baseline).
-N2. **next:** Flink lookup source (dimension joins: `LookupTableSource` with a small cache) and bounded/unbounded semantics notes.
-N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow Flight SQL Java client directly (no
+N2. **Flink lookup source** — done 2026-10-29 (see Log, `docs/flink.md` "Lookup joins"). Follow-ups, none blocking:
+    - Async lookups (`AsyncLookupFunctionProvider`) if per-key latency matters; full cache (`lookup.cache` =
+      `FULL`, reload of the whole table) if wanted; several keys per round trip (`IN`); all purely additive.
+N3. **next:** **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow Flight SQL Java client directly (no
     JDBC), DuckDB SQL dialect, metadata sync from Flight SQL `GetTables`/`GetColumns`; CI in a `metabase/metabase`
     container: sync + native and GUI-built queries, answers checked; speed vs the JDBC-based community driver.
 
@@ -139,3 +141,16 @@ N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow 
   tests. CI 40807395590 green. N1j done — the unchanged sources compile and pass all 98 tests against Flink
   2.3.0 (no deprecation warnings); profile `-Pflink2` (classifier `shaded-flink2`), CI matrix 1.20/2.x.
   CI 40807995648 green (both matrix jobs). Local builds: `~/.wgetrc` needs `ca_certificate=` the proxy CA for `mvnw`'s download.
+- 2026-10-29: N2 done — lookup joins: `FlightDynamicTableSource` is a `LookupTableSource`; `FlightLookupFunction`
+  plans `SELECT <columns> FROM <table> WHERE <pushed filters> AND k = v ...` per key and reads every endpoint
+  (partial mode: all nodes) through `FlightSplitReader` (same location failover), rows copied out of the batch.
+  Keys written as literals (no bound parameters, see Open questions), so only exactly comparable key types are
+  accepted (as filter pushdown, TIMESTAMP p <= 6; DOUBLE etc. rejected at planning); NULL key values match
+  nothing without a server call. Flink's partial cache via the standard `lookup.cache` options (also as
+  `OPTIONS` hints on catalog tables; `FULL` rejected); no cache by default. Flink 1.20 keeps dimension
+  conditions in the `LookupJoin` (`where=[...]`), applied on the looked-up rows. `FlightLookupIntegrationTest`
+  (7: every key type composite, several rows per key, missing/NULL keys, quoted strings, whole-minute
+  timestamps, cache hint, rejected DOUBLE key, 2-node partial mode, streaming mode) + 5 unit tests; new
+  `sparrow.dims` test table. CI 40819420866 red on 2.x only (test's anonymous `LookupContext` lacked 2.x's
+  `preferCustomShuffle()`; a stale incremental local `-Pflink2` run had hidden it - use `clean`), fixed:
+  CI 40819937283 green (both matrix jobs). 110 + 4 tests.
