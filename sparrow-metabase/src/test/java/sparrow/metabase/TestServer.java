@@ -14,12 +14,19 @@ import pro.surpin.data.arrowflight.server.TestFlightServerHelper;
 /**
  * In-process Arrow Flight SQL server over Parquet data generated with DuckDB in a temporary directory:
  * {@code sparrow.types} (one row per DuckDB type the driver maps plus an all-null row), {@code sparrow.numbers}
- * (100 000 rows, several Arrow batches) and {@code sparrow.nested} (list, struct and map columns).
+ * (100 000 rows, several Arrow batches), {@code sparrow.nested} (list, struct and map columns) and the shop tables
+ * of the Metabase smoke test, {@code shop.orders} ({@value #ORDERS} rows) and {@code shop.customers}
+ * ({@value #CUSTOMERS} rows), whose values follow formulas that {@code driver/test/smoke.py} repeats to compute the
+ * expected answers.
  */
 final class TestServer implements AutoCloseable {
 
     /** Rows of {@code sparrow.numbers}. */
     static final int NUMBERS = 100_000;
+    /** Rows of {@code shop.orders}. */
+    static final int ORDERS = 1000;
+    /** Rows of {@code shop.customers}. */
+    static final int CUSTOMERS = 20;
 
     final TestFlightServerHelper helper;
     final int port;
@@ -53,6 +60,8 @@ final class TestServer implements AutoCloseable {
         Path types = Files.createDirectories(dir.resolve("sparrow/types"));
         Path numbers = Files.createDirectories(dir.resolve("sparrow/numbers"));
         Path nested = Files.createDirectories(dir.resolve("sparrow/nested"));
+        Path orders = Files.createDirectories(dir.resolve("shop/orders"));
+        Path customers = Files.createDirectories(dir.resolve("shop/customers"));
         try (Connection c = DriverManager.getConnection("jdbc:duckdb:"); Statement s = c.createStatement()) {
             s.execute("SET TimeZone = 'UTC'");
             s.execute("COPY (SELECT * FROM (VALUES "
@@ -67,6 +76,21 @@ final class TestServer implements AutoCloseable {
                     + ")) TO '" + numbers.resolve("part-0.parquet") + "' (FORMAT parquet)");
             s.execute("COPY (SELECT 1 AS id, [1, 2] AS l, {'a': 1, 'b': 'x'} AS st) TO '"
                     + nested.resolve("part-0.parquet") + "' (FORMAT parquet)");
+            // keep in sync with orders()/customers() in driver/test/smoke.py
+            s.execute("COPY (SELECT i::INTEGER AS id, (i % " + CUSTOMERS + ")::INTEGER AS customer_id,"
+                    + " DATE '2023-01-01' + ((i * 7) % 730)::INTEGER AS order_date,"
+                    + " CAST(DATE '2023-01-01' + ((i * 7) % 730)::INTEGER AS TIMESTAMP)"
+                    + " + to_seconds((i * 3637) % 86400) AS created_at,"
+                    + " CAST(CAST(DATE '2023-01-01' + ((i * 7) % 730)::INTEGER AS TIMESTAMP)"
+                    + " + to_seconds((i * 3637) % 86400) AS TIMESTAMPTZ) AS created_tz,"
+                    + " CAST(((i * 37) % 10000) / 100 AS DECIMAL(10,2)) AS amount,"
+                    + " ['open', 'shipped', 'returned'][i % 3 + 1] AS status,"
+                    + " CASE i % 10 WHEN 0 THEN '50% off' WHEN 1 THEN 'gift_wrap' ELSE 'Note ' || i END AS note"
+                    + " FROM range(" + ORDERS + ") t(i)) TO '" + orders.resolve("part-0.parquet")
+                    + "' (FORMAT parquet)");
+            s.execute("COPY (SELECT i::INTEGER AS id, 'Customer ' || i AS name,"
+                    + " ['Berlin', 'Paris', 'Rome', 'Oslo'][i % 4 + 1] AS city FROM range(" + CUSTOMERS
+                    + ") t(i)) TO '" + customers.resolve("part-0.parquet") + "' (FORMAT parquet)");
         }
     }
 
