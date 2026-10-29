@@ -153,4 +153,4 @@ N3. **next:** **Metabase native driver**: a Metabase driver (Clojure) that uses 
   timestamps, cache hint, rejected DOUBLE key, 2-node partial mode, streaming mode) + 5 unit tests; new
   `sparrow.dims` test table. CI 40819420866 red on 2.x only (test's anonymous `LookupContext` lacked 2.x's
   `preferCustomShuffle()`; a stale incremental local `-Pflink2` run had hidden it - use `clean`), fixed:
-  CI 40819937283 green (both matrix jobs). 110 + 4 tests.
+  CI 40819937283 green (both matrix jobs). 106 + 4 tests.
