@@ -34,18 +34,17 @@ N2. **Flink lookup source** — done 2026-10-29 (see Log, `docs/flink.md` "Looku
 N3. **next:** **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow Flight SQL Java client directly (no
     JDBC), DuckDB SQL dialect, metadata sync from Flight SQL `GetTables`/`GetColumns`; CI in a `metabase/metabase`
     container: sync + native and GUI-built queries, answers checked; speed vs the JDBC-based community driver.
-    Plan and state: `docs/metabase.md`. Done: N3a Java bridge (`sparrow-metabase` module, see Log).
-    Next step (N3b): the Clojure driver skeleton in Metabase's module layout, in this repo under
-    `sparrow-metabase/driver/` (`deps.edn` depending on the bridge jar, `resources/metabase-plugin.yaml` with
-    the bridge's detail keys, `src/metabase/driver/sparrow.clj`): `register! :sparrow :parent #{:sql}`,
-    `can-connect?`, `describe-database*`, `describe-fields` (DuckDB type name -> base type), and
-    `execute-reducible-query` (`sql.qp` compile, `FlightSqlBridge.execute`, `cancel` on the canceled chan),
-    modelled on `modules/drivers/bigquery-cloud-sdk` of Metabase v0.65.2.2 (latest tag on 2026-10-29). Build
-    and test it only in CI (clojars.org is blocked in the session; github.com git clones work): a separate job
-    in `ci.yml` that checks out `metabase/metabase` at the pinned tag, copies the driver into `modules/drivers`,
-    installs the bridge with Maven, builds with `clojure -X:build:drivers:build/driver :driver :sparrow` and
-    runs a first smoke test (sync + one native query) against the in-process server. The plugin jar must
-    bundle the bridge with relocated Arrow/gRPC/Netty (plugins share one class loader).
+    Plan and state: `docs/metabase.md`. Done: N3a Java bridge, N3b driver skeleton + CI smoke job (see Log).
+    Next step (N3c): answers checked on real queries. Extend `SmokeServer`/`smoke.py` (or a TPC-H-shaped data
+    set as `TpchData` in sparrow-flink) and check through Metabase's API: MBQL with date bucketing (breakout by
+    month/year on DATE and TIMESTAMP columns: needs DuckDB's date functions - implement `sql.qp/date` for
+    `:sparrow` (`date_trunc`, `extract`), `sql.qp/current-datetime-honeysql-form`, `unix-timestamp->honeysql`,
+    `add-interval-honeysql-form`, modelled on Metabase's `:postgres`/community DuckDB driver), joins between
+    tables, `distinct`, `percentile`/`median` (or switch the features off), string filters (`contains`,
+    `starts-with`, case-insensitive), and native queries with template tags: substitute values into the SQL
+    text (`driver/substitute-native-parameters` with inline literals) instead of refusing them (today an
+    `unsupported-feature` error). Each feature the server cannot answer correctly: `database-supports?` false.
+    Then (N3d) the speed comparison with the JDBC-based community driver.
 
 ## Open questions
 
@@ -175,3 +174,21 @@ N3. **next:** **Metabase native driver**: a Metabase driver (Clojure) that uses 
   `OffsetDateTime` in the column's zone), `DuckDbTypes` (DuckDB type names for `database_type`). Found: Parquet
   stores DuckDB's unsigned integers as wider signed types (UTINYINT -> SMALLINT, UBIGINT -> DECIMAL(20,0)).
   15 tests (3 unit + 12 against the in-process server). CI 40824250224 green (both matrix jobs).
+- 2026-10-29: N3b done — Metabase driver skeleton `sparrow-metabase/driver` (Metabase module layout:
+  `deps.edn`, `resources/metabase-plugin.yaml` with the bridge's detail keys, `src/metabase/driver/sparrow.clj`):
+  `:sparrow` under `:sql`, `can-connect?`, `describe-database*`, `describe-fields` (DuckDB type -> base type),
+  `mbql->native` with `*compile-with-inline-parameters*` (server rejects `?`), `execute-reducible-query` (lazy
+  rows, cancel via Metabase's canceled channel; native queries with parameters refused for now), features
+  narrowed. The bridge ships as `sparrow-metabase-<version>-shaded.jar` (relocated under
+  `sparrow.metabase.shaded`). CI job `metabase-driver`: Metabase checkout at v0.65.2.2, the driver built with
+  `clojure -X:build:drivers:build/driver :driver :sparrow` (JDK 25, Clojure CLI 1.12.0.1488; ~45 s, verify
+  passes), loaded into the `metabase/metabase:v0.65.2.2` container next to `SmokeServer` (in-process server,
+  test sources); `smoke.py`: setup, database added, sync (tables, field types), native aggregation and MBQL
+  count/breakout/filter answers. Found: Netty 4.2 disables `sun.misc.Unsafe` on Java 25+ (Metabase's runtime)
+  and Arrow's Netty allocator then fails ("Failed to read message.", `ClassCastException` to
+  `PooledUnsafeDirectByteBuf`); the bridge sets `io.netty.noUnsafe=false` unless set (relocated in the shaded
+  jar, so only the bundled Netty) - Unsafe memory access will be denied by a later JDK, then Arrow needs another
+  allocator. Also seen: client core retries SQL errors (e.g. unknown table) 4 times before failing. Local
+  pre-check without Metabase: the driver namespace against stub Metabase namespaces + the shaded jar + the
+  in-process server, JDK 21 and 25. 16 bridge tests (+1). CI 40830332236 red (Metabase 0.65 has no `engines`
+  in session properties), 40830856369 red (the Netty/Unsafe failure), 40831748643 green (all three jobs).
