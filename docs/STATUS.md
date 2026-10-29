@@ -34,6 +34,18 @@ N2. **Flink lookup source** — done 2026-10-29 (see Log, `docs/flink.md` "Looku
 N3. **next:** **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow Flight SQL Java client directly (no
     JDBC), DuckDB SQL dialect, metadata sync from Flight SQL `GetTables`/`GetColumns`; CI in a `metabase/metabase`
     container: sync + native and GUI-built queries, answers checked; speed vs the JDBC-based community driver.
+    Plan and state: `docs/metabase.md`. Done: N3a Java bridge (`sparrow-metabase` module, see Log).
+    Next step (N3b): the Clojure driver skeleton in Metabase's module layout, in this repo under
+    `sparrow-metabase/driver/` (`deps.edn` depending on the bridge jar, `resources/metabase-plugin.yaml` with
+    the bridge's detail keys, `src/metabase/driver/sparrow.clj`): `register! :sparrow :parent #{:sql}`,
+    `can-connect?`, `describe-database*`, `describe-fields` (DuckDB type name -> base type), and
+    `execute-reducible-query` (`sql.qp` compile, `FlightSqlBridge.execute`, `cancel` on the canceled chan),
+    modelled on `modules/drivers/bigquery-cloud-sdk` of Metabase v0.65.2.2 (latest tag on 2026-10-29). Build
+    and test it only in CI (clojars.org is blocked in the session; github.com git clones work): a separate job
+    in `ci.yml` that checks out `metabase/metabase` at the pinned tag, copies the driver into `modules/drivers`,
+    installs the bridge with Maven, builds with `clojure -X:build:drivers:build/driver :driver :sparrow` and
+    runs a first smoke test (sync + one native query) against the in-process server. The plugin jar must
+    bundle the bridge with relocated Arrow/gRPC/Netty (plugins share one class loader).
 
 ## Open questions
 
@@ -154,3 +166,12 @@ N3. **next:** **Metabase native driver**: a Metabase driver (Clojure) that uses 
   `sparrow.dims` test table. CI 40819420866 red on 2.x only (test's anonymous `LookupContext` lacked 2.x's
   `preferCustomShuffle()`; a stale incremental local `-Pflink2` run had hidden it - use `clean`), fixed:
   CI 40819937283 green (both matrix jobs). 106 + 4 tests.
+- 2026-10-29: N3a done — `sparrow-metabase` Maven module, the Java side of the Metabase driver (design in
+  `docs/metabase.md`): `FlightSqlBridge` (connection from Metabase details with the Flink connector's
+  validation; sync metadata from `GetDbSchemas`/`GetTables` with exact-name filtering; queries always planned
+  with `x-flight-result-mode: complete`, since client core's `callOptions()` always asks for `partial`, which
+  would split aggregations per node; reads without a deadline, cancel from another thread), `QueryResult`
+  (lazy `Object[]` rows), `ArrowValues` (Arrow -> Java values Metabase handles, timestamps with zone as
+  `OffsetDateTime` in the column's zone), `DuckDbTypes` (DuckDB type names for `database_type`). Found: Parquet
+  stores DuckDB's unsigned integers as wider signed types (UTINYINT -> SMALLINT, UBIGINT -> DECIMAL(20,0)).
+  15 tests (3 unit + 12 against the in-process server). CI 40824250224 (running).
