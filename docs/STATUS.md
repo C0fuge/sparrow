@@ -2,6 +2,8 @@
 
 ## Next steps
 
+> **Maintainer, 2026-10-29 13:15 - FINISH MODE:** finish N3 (the native Metabase driver already started: sync + queries + CI + speed vs the JDBC driver) and the Flink follow-ups that are already half-done; then write "SPARROW DONE" and stop. No new items.
+
 N1. **Apache Flink connector (native).** Done so far (step 1, see `docs/flink.md`): `arrow-flight` table factory,
     FLIP-27 `FlightSource` (enumerator plans on job start, one split per endpoint, splits pulled on request),
     `FlightSplitReader` via `EndpointReader.forEndpoint` (client-core retries + backup locations), checked
