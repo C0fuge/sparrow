@@ -38,11 +38,8 @@ N3. **next:** **Metabase native driver**: a Metabase driver (Clojure) that uses 
     container: sync + native and GUI-built queries, answers checked; speed vs the JDBC-based community driver.
     Plan and state: `docs/metabase.md`. Done: N3a Java bridge, N3b driver skeleton + CI smoke job, N3c answers
     checked on real queries (date bucketing, joins, distinct/percentile, string filters, native template tags;
-    see Log), N3d speed comparison (see Log).
-    Next step (N3e, finish mode): the follow-ups switched off so far, each with smoke checks whose answers
-    `smoke.py` computes: `regex` (`regexp_extract`), `datetime-diff` (`date_diff`, Metabase's whole-unit
-    semantics), `convert-timezone` (`timezone`); optionally a few TPC-H-shaped questions on `perf.lineitem` in
-    the smoke test (small row count). Then the Flink 2.x perf-baseline follow-up of N1, then "SPARROW DONE".
+    see Log), N3d speed comparison (see Log), N3e `regex`, `datetime-diff`, `convert-timezone` (see Log).
+    Next step (finish mode): the Flink 2.x perf-baseline follow-up of N1, then "SPARROW DONE".
 
 ## Open questions
 
@@ -223,3 +220,12 @@ N3. **next:** **Metabase native driver**: a Metabase driver (Clojure) that uses 
   7.35/8.42 (1.15x). Aggregations are server-bound (equal); row transfer is 13-17 % faster natively (the rest of a large
   download is presumably Metabase's own row processing and CSV writing; not profiled). Earlier dispatches 40859930805,
   40860388753, 40861125149 red (deps.edn insertion, `SELECT 1` refused). Bridge tests 17 (+1, `perf.lineitem`).
+- 2026-10-29: N3e done — the Metabase driver now supports `regex` (regexExtract: `regexp_extract` guarded by
+  `regexp_matches`, so NULL without a match instead of DuckDB's ''; first capturing group if the pattern has one,
+  as Postgres; `regex/lookaheads-and-lookbehinds` off, RE2), `datetime-diff` (Metabase's whole units truncated
+  toward zero; months from year/month/day parts as Postgres' `age` - DuckDB's `date_sub('month')` counts Jan 31
+  -> Feb 28 as a month, which a smoke sum catches: 2149 vs 2121; week/day from `DATE - DATE`, hour/minute/second
+  via `date_sub` on timestamps; TIMESTAMPTZ as UTC wall clock) and `convert-timezone` (`timezone(zone, x)`,
+  Postgres semantics). 17 new smoke checks with answers computed in `smoke.py` (both directions of every diff,
+  zoneinfo for the zones), SQL cross-checked locally against DuckDB. CI 40877446820 green (all three jobs, 46
+  smoke checks). TPC-H-shaped questions in the smoke test left out (N3d's perf run already checks equal answers).
