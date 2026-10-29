@@ -102,6 +102,22 @@ bundled with the JDBC driver and CI should not download it), so the numbers are 
 answers. The query texts are written in SQL both engines accept (`WITH` instead of the Q15 view, `val`
 instead of the reserved alias `value`, key columns added to `ORDER BY` where ties are possible).
 
+## Performance: TPC-H vs JDBC
+
+`TpchPerfTest` (`perf` tag, local runs only: `./mvnw -Pperf test -pl sparrow-flink -Dtest=TpchPerfTest
+[-Dtpch.sf=1] [-Dtpch.queries=1,6]`) times the 22 queries through Flink SQL (batch mode, parallelism 2) on a
+two-node in-process cluster with three sources: the `arrow-flight` catalog (`native`), Flink's JDBC connector
+(`flink-connector-jdbc-core` 3.3) with the stock Arrow Flight SQL JDBC driver, one split per table (`jdbc`),
+and the same with the five large tables split into two key ranges (`jdbc-part`, `scan.partition.*`). Flink's
+JDBC connector has no dialect for `jdbc:arrow-flight-sql:` URLs, so the test registers one
+(`FlightSqlJdbcFactory`: DuckDB quoting and `LIMIT`); and the server rejects bound statement parameters,
+which the JDBC connector uses for every pushed-down filter and partition bound, so the baseline's driver
+(`InliningFlightSqlDriver`) writes them into the SQL text. Every answer of every source is also compared
+with DuckDB's, so a run at SF 1 checks the SF 1 answers too. Results go to `target/tpch-perf.txt`; numbers in
+`docs/STATUS.md` (Log). First run (SF 1, 4 cores): the full lineitem scan 1.56x faster than single-split
+JDBC and 1.27x faster than partitioned JDBC; over the 22 queries 1.06x, as Flink's joins and aggregations
+dominate the wall time.
+
 ## Types
 
 Columns are matched by position with the declared Flink schema. Supported: BOOLEAN, TINYINT, SMALLINT, INT,

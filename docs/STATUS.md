@@ -14,11 +14,12 @@ N1. **Apache Flink connector (native).** Done so far (step 1, see `docs/flink.md
     Flink heap vectors, rows are `ColumnarRowData` views; checked semantics kept); N1f TLS + bearer + Kerberos
     MiniCluster tests against two-node TLS clusters (`tls.truststore` options, in-process Kerby KDC); N1g
     TPC-H SF0.1: all 22 queries through Flink SQL over catalog tables of a 2-node partial-mode cluster equal
-    DuckDB's answers on the same Parquet (`TpchIntegrationTest`, data from `TpchData`). Remaining, in order:
-    - **N1h next:** perf vs Flink JDBC + Flight SQL JDBC driver (`perf` tag, TPC-H SF1 with `TpchData`, Flink
-      SQL `connector = 'jdbc'` with the Arrow Flight SQL JDBC driver against the same in-process cluster; report
-      wall time per query, local runs only, numbers into the Log). Then SF1 answers (same test, `perf` or a
-      new `tpch-sf1` tag if it is too slow for every CI run), connector shading (uber jar), Flink 2.x module.
+    DuckDB's answers on the same Parquet (`TpchIntegrationTest`, data from `TpchData`); N1h perf vs Flink JDBC +
+    Flight SQL JDBC driver and SF 1 answers (`TpchPerfTest`, `perf` tag, see Log). Remaining, in order:
+    - **N1i next:** connector shading: an uber jar for `lib/` or `ADD JAR` (relocate Arrow, gRPC, Netty,
+      Protobuf, Jackson, BouncyCastle as the server's Spark connector does; keep Flink and slf4j provided;
+      merge `META-INF/services`), plus a MiniCluster test that loads only the shaded jar in a separate class
+      loader (`ADD JAR` / user-code class loader) and reads a table. Then a Flink 2.x module.
     Goal (maintainer): `DynamicTableSource` (ScanTableSource) + `Catalog` over the server's metadata: one
     Flink split per Flight endpoint in partial mode (parallel readers, backup locations for failover), Arrow batches
     converted to Flink `RowData` columnar-wise (no per-value boxing where avoidable), projection + filter + limit pushdown
@@ -52,6 +53,11 @@ N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow 
   planner would also list itself as a backup (today an endpoint on a dead node has only the other non-planner
   nodes as backups; in a 2-node cluster none). Not sent yet, as the header is part of the server contract -
   OK to send it from the Flink connector? (maintainer)
+- Bound statement parameters: `CreatePreparedStatement` works, but a query with `?` fails ("Statement
+  parameters (?) are not supported; put the values into the SQL text"). Flink's JDBC connector binds every
+  pushed-down filter value and partition bound, so stock Flink JDBC (and BI tools that bind parameters) cannot
+  read from the server; the perf baseline inlines them in a wrapper driver (`InliningFlightSqlDriver`). Does the
+  server want to support `DoPut` parameter binding for prepared statements? (maintainer → server repo)
 - Streaming mode: a bounded source restored from a checkpoint with a half-read split fails (Flight streams are
   not resumable and their row order is not guaranteed). Is batch-only acceptable, or do we need a resumable
   ticket (row offset) from the server? (maintainer)
@@ -110,3 +116,13 @@ N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow 
   Volcano planner fails Q18/Q21 with its internal "has wrong best cost" check (no statistics involved; not
   active in production) - Calcite assertions now disabled in surefire (`-da:org.apache.calcite...`).
   ~90 s for the 22 queries locally. 91 tests (+23). CI 40781931010 green.
+- 2026-10-29: N1h done — `TpchPerfTest` (`perf` tag, local only): 22 TPC-H queries + a full lineitem scan
+  through Flink SQL (batch, parallelism 2) on a 2-node in-process cluster, sources `native` (catalog, partial
+  mode), `jdbc` (Flink `flink-connector-jdbc-core` 3.3.0-1.20 + Arrow Flight SQL JDBC driver 19.0.0, one split)
+  and `jdbc-part` (large tables in 2 key ranges); every answer compared with DuckDB's, so it also checks SF 1:
+  all 69 answers equal. Needed for the baseline: a test JDBC dialect for `jdbc:arrow-flight-sql:`
+  (`FlightSqlJdbcFactory`) and `InliningFlightSqlDriver`, since the server rejects bound parameters (Open
+  questions). SF 1, local 4 cores, one run, wall s native/jdbc/jdbc-part: scan 17.0/26.5/21.6 (jdbc 1.56x,
+  jdbc-part 1.27x slower), 22 queries 253/268/270 (1.06x; Q1 14.1/17.2/16.9, Q9 99.8/102.4/103.2 - joins in
+  Flink dominate; the in-process nodes run DuckDB with 1 thread). Flink's SUM(INT) keeps INT and overflows at
+  SF 1 (the scan probe casts). 94 tests (+3). CI RUNID.

@@ -109,8 +109,8 @@ class TpchIntegrationTest {
     @MethodSource("queries")
     void answersEqualDuckDb(int query) throws Exception {
         String sql = read("tpch/q" + query + ".sql");
-        List<List<Object>> expected = duckDb(sql);
-        List<List<Object>> actual = flink(sql);
+        List<List<Object>> expected = duckDb(duckdb, sql);
+        List<List<Object>> actual = flink(env, sql);
         assertFalse(expected.isEmpty(), "the data must give the query an answer");
         assertEquals(expected.size(), actual.size(), "rows of Q" + query + ": " + actual);
         for (int i = 0; i < expected.size(); i++) {
@@ -121,7 +121,8 @@ class TpchIntegrationTest {
         }
     }
 
-    private static boolean same(List<Object> expected, List<Object> actual) {
+    /** Whether two normalized rows are equal (numbers as in the class comment). */
+    static boolean same(List<Object> expected, List<Object> actual) {
         if (expected.size() != actual.size()) {
             return false;
         }
@@ -149,7 +150,7 @@ class TpchIntegrationTest {
      * Decimals and doubles as they are, other numbers as BigDecimal, everything else as its string (dates
      * print as yyyy-MM-dd in both).
      */
-    private static Object normalize(Object value) {
+    static Object normalize(Object value) {
         if (value instanceof BigDecimal || value instanceof Double) {
             return value;
         }
@@ -162,9 +163,10 @@ class TpchIntegrationTest {
         return value == null ? null : value.toString();
     }
 
-    private static List<List<Object>> duckDb(String sql) throws Exception {
+    /** DuckDB's normalized answer to {@code sql}. */
+    static List<List<Object>> duckDb(Connection connection, String sql) throws Exception {
         List<List<Object>> rows = new ArrayList<>();
-        try (Statement s = duckdb.createStatement(); ResultSet r = s.executeQuery(sql)) {
+        try (Statement s = connection.createStatement(); ResultSet r = s.executeQuery(sql)) {
             int columns = r.getMetaData().getColumnCount();
             while (r.next()) {
                 List<Object> row = new ArrayList<>();
@@ -177,9 +179,10 @@ class TpchIntegrationTest {
         return rows;
     }
 
-    private static List<List<Object>> flink(String sql) throws Exception {
+    /** Flink's normalized answer to {@code sql}. */
+    static List<List<Object>> flink(TableEnvironment tableEnv, String sql) throws Exception {
         List<List<Object>> rows = new ArrayList<>();
-        try (CloseableIterator<Row> it = env.executeSql(sql).collect()) {
+        try (CloseableIterator<Row> it = tableEnv.executeSql(sql).collect()) {
             while (it.hasNext()) {
                 Row r = it.next();
                 List<Object> row = new ArrayList<>();
@@ -192,7 +195,8 @@ class TpchIntegrationTest {
         return rows;
     }
 
-    private static String read(String resource) throws IOException {
+    /** A UTF-8 test resource. */
+    static String read(String resource) throws IOException {
         try (InputStream in = TpchIntegrationTest.class.getClassLoader().getResourceAsStream(resource)) {
             if (in == null) {
                 throw new IOException("missing resource " + resource);

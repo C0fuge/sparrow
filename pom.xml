@@ -21,6 +21,7 @@
         <kestrel.version>1.0.0</kestrel.version>
         <arrow.version>19.0.0</arrow.version>
         <flink.version>1.20.3</flink.version>
+        <flink-jdbc.version>3.3.0-1.20</flink-jdbc.version>
         <hadoop.version>3.5.0</hadoop.version>
         <!-- Kept equal to the server's BOMs: one gRPC/Netty/Jackson line for client core and the test server
              (a mix of gRPC or Netty modules fails at runtime). Bump together with kestrel.ref. -->
