@@ -23,7 +23,7 @@ class FlightDynamicTableSourceTest {
     @Test
     void rendersProjectedColumnsQuoted() {
         var source = new FlightDynamicTableSource(CONFIG, "s.t", DataTypes.ROW(
-                DataTypes.FIELD("a", DataTypes.INT()), DataTypes.FIELD("b c", DataTypes.STRING())));
+                DataTypes.FIELD("a", DataTypes.INT()), DataTypes.FIELD("b c", DataTypes.STRING())), null);
         String sql = source.query();
         assertEquals(true, sql.contains("\"a\"") && sql.contains("\"b c\"") && sql.contains("s.t"), sql);
         source.applyProjection(new int[][] {{1}}, DataTypes.ROW(DataTypes.FIELD("b c", DataTypes.STRING())));
@@ -32,14 +32,14 @@ class FlightDynamicTableSourceTest {
 
     @Test
     void emptyProjectionReadsAConstant() {
-        var source = new FlightDynamicTableSource(CONFIG, "s.t", DataTypes.ROW());
+        var source = new FlightDynamicTableSource(CONFIG, "s.t", DataTypes.ROW(), null);
         assertEquals("SELECT 1 FROM s.t", source.query());
     }
 
     @Test
     void pushesSupportedFiltersAndLimit() {
         var source = new FlightDynamicTableSource(CONFIG, "s.t", DataTypes.ROW(
-                DataTypes.FIELD("a", DataTypes.INT()), DataTypes.FIELD("d", DataTypes.DOUBLE())));
+                DataTypes.FIELD("a", DataTypes.INT()), DataTypes.FIELD("d", DataTypes.DOUBLE())), null);
         ResolvedExpression onA = CallExpression.permanent(BuiltInFunctionDefinitions.GREATER_THAN,
                 List.of(new FieldReferenceExpression("a", DataTypes.INT(), 0, 0), new ValueLiteralExpression(3)),
                 DataTypes.BOOLEAN());

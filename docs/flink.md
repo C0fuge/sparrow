@@ -81,6 +81,42 @@ intervals, DECIMAL with p > 38, HALF_FLOAT) are left out of the table, with a wa
 - Limit: `LIMIT n` is appended to the server query; Flink keeps its own limit on top (in `partial` mode each
   node may return up to `n` rows).
 
+## Lookup joins
+
+`arrow-flight` tables (DDL and catalog tables) can be the dimension side of a lookup join:
+
+```sql
+SELECT o.order_id, c.c_name
+FROM orders AS o
+JOIN flight.tpch.customer /*+ OPTIONS('lookup.cache' = 'PARTIAL', 'lookup.partial-cache.max-rows' = '10000',
+        'lookup.partial-cache.expire-after-write' = '10 min') */
+  FOR SYSTEM_TIME AS OF o.proc_time AS c
+  ON c.c_custkey = o.customer_id;
+```
+
+For every probe row (or cache miss) the connector plans `SELECT <used columns> FROM <table> WHERE k1 = v1
+AND ...` on the server and reads all returned endpoints (in `partial` mode one per node) with the same location
+failover as a scan; every matching row is returned, a missing key returns none. Key values are written into
+the SQL as literals (the server does not bind statement parameters), so keys are limited to the types whose
+equality the server evaluates exactly as Flink: TINYINT..BIGINT, DECIMAL, VARCHAR/STRING, BOOLEAN, DATE and
+TIMESTAMP(p <= 6). Other key types (FLOAT/DOUBLE, CHAR, TIME, TIMESTAMP_LTZ, binary) are rejected when the job is
+planned. A NULL key value matches no row (SQL equality) and is not sent to the server. Other conditions on the
+dimension table (`AND c.c_mktsegment = 'X'`) are evaluated by Flink on the looked-up rows.
+
+Cache: Flink's standard lookup options; no cache by default (every lookup is a round trip: `GetFlightInfo` plus
+one `DoGet` per endpoint).
+
+| Option | Default | Meaning |
+|---|---|---|
+| `lookup.cache` | NONE | `NONE` or `PARTIAL` (`FULL` is not supported) |
+| `lookup.partial-cache.max-rows` | | Maximum cached keys; `PARTIAL` needs this or an expiry |
+| `lookup.partial-cache.expire-after-write` | | Drop entries this long after they were loaded |
+| `lookup.partial-cache.expire-after-access` | | Drop entries this long after their last use |
+| `lookup.partial-cache.cache-missing-key` | true | Also cache keys without rows |
+
+On catalog tables, set them with an `OPTIONS` hint as above (credentials stay in the catalog). A cached row
+is not refreshed when the server data changes until it expires.
+
 ## Options
 
 | Option | Default | Meaning |
@@ -152,7 +188,8 @@ holds milliseconds). Other types are rejected when the table is created.
 
 ## Limits (current)
 
-- Bounded source. Run it in batch mode: a Flight stream cannot be resumed at a row offset, so restoring a
-  streaming checkpoint taken while a split was half read fails with an explicit error instead of
-  duplicating or losing rows.
+- Bounded scan source. Run scans in batch mode: a Flight stream cannot be resumed at a row offset, so restoring
+  a streaming checkpoint taken while a split was half read fails with an explicit error instead of
+  duplicating or losing rows. Lookups keep no state and work in batch and streaming jobs (both tested), e.g.
+  enriching a Kafka stream.
 - The connector jar needs Java 21 on the Flink cluster (the server's client core is built for Java 21).

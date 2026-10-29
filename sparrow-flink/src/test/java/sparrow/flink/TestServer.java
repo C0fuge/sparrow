@@ -13,8 +13,9 @@ import pro.surpin.data.arrowflight.server.TestFlightServerHelper;
 /**
  * In-process Arrow Flight SQL server for the tests over Parquet data generated with DuckDB in a temporary
  * directory: {@code sparrow.types} (one row per supported type plus an all-null row) and
- * {@code sparrow.numbers} (100 000 rows, several Arrow batches) and {@code sparrow.nested} (a list column the
- * connector cannot read next to readable ones).
+ * {@code sparrow.numbers} (100 000 rows, several Arrow batches), {@code sparrow.nested} (a list column the
+ * connector cannot read next to readable ones) and {@code sparrow.dims} (lookup dimension: a key with two rows, a
+ * string with a quote, whole-minute timestamps, an all-null row but the key).
  */
 final class TestServer implements AutoCloseable {
 
@@ -55,6 +56,7 @@ final class TestServer implements AutoCloseable {
         Path types = Files.createDirectories(dir.resolve("sparrow/types"));
         Path numbers = Files.createDirectories(dir.resolve("sparrow/numbers"));
         Path nested = Files.createDirectories(dir.resolve("sparrow/nested"));
+        Path dims = Files.createDirectories(dir.resolve("sparrow/dims"));
         try (Connection c = DriverManager.getConnection("jdbc:duckdb:"); Statement s = c.createStatement()) {
             s.execute("SET TimeZone = 'UTC'");
             s.execute("COPY (SELECT * FROM (VALUES "
@@ -67,6 +69,10 @@ final class TestServer implements AutoCloseable {
                     + types.resolve("part-0.parquet") + "' (FORMAT parquet)");
             s.execute("COPY (SELECT range::BIGINT AS n, (range % 7)::INTEGER AS m FROM range(" + NUMBERS
                     + ")) TO '" + numbers.resolve("part-0.parquet") + "' (FORMAT parquet)");
+            s.execute("COPY (SELECT * FROM (VALUES (1::BIGINT, 'it''s', TIMESTAMP '2024-01-01 00:00:00', 10),"
+                    + " (2, 'b', TIMESTAMP '2024-01-01 00:00:00.5', 20), (2, 'b2', TIMESTAMP '2024-01-01 00:01:00', 21),"
+                    + " (3, NULL, NULL, 30)) t(id, name, ts, v)) TO '" + dims.resolve("part-0.parquet")
+                    + "' (FORMAT parquet)");
             s.execute("COPY (SELECT 1 AS id, [1, 2] AS l, 'x' AS s) TO '" + nested.resolve("part-0.parquet")
                     + "' (FORMAT parquet)");
         }

@@ -76,7 +76,7 @@ class FlightCatalogIntegrationTest {
     @Test
     void listsSchemasAsDatabasesAndTheirTables() throws Exception {
         assertTrue(firstColumn("SHOW DATABASES IN fl").contains("sparrow"));
-        assertEquals(List.of("nested", "numbers", "types"), firstColumn("SHOW TABLES IN fl.sparrow"));
+        assertEquals(List.of("dims", "nested", "numbers", "types"), firstColumn("SHOW TABLES IN fl.sparrow"));
         assertTrue(catalog().tableExists(new ObjectPath("sparrow", "numbers")));
         assertFalse(catalog().tableExists(new ObjectPath("sparrow", "numbers_")));
         assertFalse(catalog().databaseExists("no_such_schema"));

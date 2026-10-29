@@ -101,6 +101,18 @@ public final class FlightSource implements Source<RowData, FlightSplit, FlightEn
      * @return one split per endpoint
      */
     private List<FlightSplit> plan() {
+        return plan(config, query, rowType);
+    }
+
+    /**
+     * Plans a query on the server and checks that it returns the declared number of columns.
+     *
+     * @param config client configuration
+     * @param query SQL
+     * @param rowType declared row type (no columns: the query returns one constant column)
+     * @return one split per endpoint
+     */
+    static List<FlightSplit> plan(Configuration config, String query, RowType rowType) {
         QueryEndpoints planned = Client.getOrCreate(config).getQueryEndpoints(query);
         int columns = planned.getSchema().getFields().size();
         int expected = Math.max(1, rowType.getFieldCount());
