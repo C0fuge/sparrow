@@ -76,3 +76,117 @@ jobs:
             **/target/surefire-reports/
             **/target/failsafe-reports/
           retention-days: 7
+
+  # Metabase driver (sparrow-metabase/driver): built with Metabase's own build scripts in a Metabase checkout at
+  # METABASE_TAG, loaded as a plugin into the Metabase container of the same tag, smoke-tested against the
+  # in-process server (sparrow-metabase SmokeServer): sync, a native and an MBQL query with answers checked.
+  metabase-driver:
+    name: metabase driver
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      KESTREL_REF: ${{ inputs.kestrel_ref }}
+      METABASE_TAG: v0.65.2.2
+      # as Metabase's CI at that tag (.github/scripts/cache-keys.sh)
+      CLOJURE_VERSION: 1.12.0.1488
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Resolve server ref
+        id: ref
+        run: |
+          ref="${KESTREL_REF:-$(tr -d '[:space:]' < kestrel.ref)}"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+      # Maven and Metabase (tools.deps) dependencies share ~/.m2/repository.
+      - name: Dependency cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository
+            !~/.m2/repository/pro/surpin
+            ~/.gitlibs
+          key: m2-metabase-${{ env.METABASE_TAG }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            m2-metabase-${{ env.METABASE_TAG }}-
+      - name: Server artifacts cache
+        id: kestrel-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/pro/surpin
+          key: kestrel-${{ steps.ref.outputs.ref }}
+      - name: Install server artifacts
+        if: steps.kestrel-cache.outputs.cache-hit != 'true' || inputs.kestrel_ref != ''
+        run: KESTREL_REF='${{ steps.ref.outputs.ref }}' scripts/install-kestrel.sh
+      - name: Package the bridge
+        run: |
+          ./mvnw -B -ntp -pl sparrow-metabase -am -DskipTests package
+          ./mvnw -B -ntp -q -pl sparrow-metabase dependency:build-classpath -Dmdep.includeScope=test \
+            -Dmdep.outputFile=target/cp.txt
+      - name: Start the test server
+        run: |
+          cd sparrow-metabase
+          nohup java --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED \
+            --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED \
+            -cp "target/test-classes:target/classes:$(cat target/cp.txt)" sparrow.metabase.SmokeServer \
+            "$RUNNER_TEMP/flight-port" > "$RUNNER_TEMP/flight-server.log" 2>&1 &
+          for i in $(seq 120); do [ -f "$RUNNER_TEMP/flight-port" ] && break; sleep 1; done
+          echo "Flight server on port $(cat "$RUNNER_TEMP/flight-port")"
+      - name: Check out Metabase
+        uses: actions/checkout@v4
+        with:
+          repository: metabase/metabase
+          ref: ${{ env.METABASE_TAG }}
+          path: metabase
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+      - name: Clojure CLI cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.clojure-cli
+          key: clojure-cli-${{ env.CLOJURE_VERSION }}
+      - name: Install Clojure CLI
+        run: |
+          echo "$HOME/.clojure-cli/bin" >> "$GITHUB_PATH"
+          if ! "$HOME/.clojure-cli/bin/clojure" --version 2>/dev/null | grep -qF "$CLOJURE_VERSION"; then
+            curl --retry 3 --fail -o "$RUNNER_TEMP/clojure-install.sh" \
+              "https://download.clojure.org/install/linux-install-$CLOJURE_VERSION.sh"
+            bash "$RUNNER_TEMP/clojure-install.sh" --prefix "$HOME/.clojure-cli"
+          fi
+      - name: Build the driver
+        run: |
+          driver=metabase/modules/drivers/sparrow
+          mkdir -p "$driver/lib"
+          cp -r sparrow-metabase/driver/deps.edn sparrow-metabase/driver/src sparrow-metabase/driver/resources "$driver/"
+          cp sparrow-metabase/target/sparrow-metabase-*-shaded.jar "$driver/lib/sparrow-metabase-shaded.jar"
+          sed -i 's|{metabase/athena |{metabase/sparrow            {:local/root "sparrow"}\n  metabase/athena |' \
+            metabase/modules/drivers/deps.edn
+          grep -q 'metabase/sparrow' metabase/modules/drivers/deps.edn
+          cd metabase
+          clojure -X:build:drivers:build/driver :driver :sparrow
+          ls -l resources/modules/sparrow.metabase-driver.jar
+      - name: Start Metabase with the driver
+        run: |
+          mkdir -p "$RUNNER_TEMP/plugins"
+          cp metabase/resources/modules/sparrow.metabase-driver.jar "$RUNNER_TEMP/plugins/"
+          chmod -R a+rwx "$RUNNER_TEMP/plugins"
+          docker run -d --name metabase --network host -v "$RUNNER_TEMP/plugins:/plugins" \
+            -e MB_PLUGINS_DIR=/plugins "metabase/metabase:$METABASE_TAG"
+          for i in $(seq 120); do
+            curl -sf http://localhost:3000/api/health && break
+            sleep 5
+          done
+          curl -sf http://localhost:3000/api/health
+      - name: Smoke test
+        run: python3 sparrow-metabase/driver/test/smoke.py http://localhost:3000 "$(cat "$RUNNER_TEMP/flight-port")"
+      - name: Logs
+        if: failure()
+        run: |
+          docker logs metabase 2>&1 | tail -400 || true
+          tail -200 "$RUNNER_TEMP/flight-server.log" || true

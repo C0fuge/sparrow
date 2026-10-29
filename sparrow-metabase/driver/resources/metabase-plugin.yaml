@@ -1,0 +1,75 @@
+info:
+  name: Metabase Sparrow Driver
+  version: 0.1.0-SNAPSHOT
+  description: Native Arrow Flight SQL driver for the Sparrow server (DuckDB SQL), without JDBC.
+driver:
+  name: sparrow
+  display-name: Sparrow (Arrow Flight SQL)
+  lazy-load: true
+  parent: sql
+  connection-properties:
+    - host
+    - merge:
+        - port
+        - placeholder: 8815
+    - merge:
+        - user
+        - required: false
+    - name: password
+      display-name: Password
+      type: password
+      required: false
+    - name: token
+      display-name: Token
+      helper-text: Bearer token, instead of a password.
+      type: password
+      required: false
+    - name: default-schema
+      display-name: Default schema
+      helper-text: Schema of unqualified table names in native queries.
+      required: false
+    - name: tls
+      display-name: Use TLS
+      type: boolean
+      default: false
+    - name: tls-verify
+      display-name: Verify the server certificate
+      type: boolean
+      default: true
+      visible-if:
+        tls: true
+    - name: tls-truststore
+      display-name: Truststore path
+      helper-text: Path of a truststore (JKS or PKCS12) with the certificates to trust, readable by Metabase.
+      required: false
+      visible-if:
+        tls: true
+    - name: tls-truststore-password
+      display-name: Truststore password
+      type: password
+      required: false
+      visible-if:
+        tls: true
+    - name: kerberos-principal
+      display-name: Kerberos service principal
+      helper-text: Authenticate with Kerberos (TLS only, no password or token), e.g. flight/server.example.com.
+      required: false
+      visible-if:
+        tls: true
+    - advanced-options-start
+    - name: timeout-ms
+      display-name: Planning timeout (ms)
+      helper-text: Deadline of query planning and metadata calls; 0 or empty for none.
+      required: false
+      visible-if:
+        advanced-options: true
+    - name: max-retries
+      display-name: Retries
+      helper-text: Retries of failed planning and metadata calls.
+      required: false
+      visible-if:
+        advanced-options: true
+    - default-advanced-options
+init:
+  - step: load-namespace
+    namespace: metabase.driver.sparrow

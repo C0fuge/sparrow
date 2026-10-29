@@ -32,21 +32,47 @@ Two parts:
      `INTEGER[]`, `STRUCT("a" INTEGER)`, ...), stored by Metabase as `database_type` and mapped to base types
      by the driver. Parquet keeps unsigned integers as wider signed types, so table columns of unsigned data
      show up as `SMALLINT`/`DECIMAL(20,0)` etc.
-2. **Clojure driver** (next): `modules/drivers/sparrow` in Metabase's layout, modelled on Metabase's own
-   non-JDBC SQL driver `bigquery-cloud-sdk` (v0.65.2.2): `driver/register! :sparrow :parent #{:sql}`;
-   `can-connect?` (`ping`), `describe-database*` (`tables`), `describe-fields` (`columns`, DuckDB name ->
-   base type), `execute-reducible-query` (compile with `sql.qp` + honeysql in DuckDB's dialect, run `execute`,
-   reduce the rows, `cancel` on the canceled channel), `database-supports?` per feature, `db-default-timezone`,
-   `mbql->native` from `:sql`. Native queries with Metabase parameters are substituted into the SQL text (the
-   server rejects bound parameters, see Open questions). The plugin jar bundles the bridge and client core
-   (Arrow/gRPC/Netty relocated as in the Flink jar: Metabase plugins share one class loader, and other plugins
-   such as BigQuery bring their own Arrow/gRPC/Netty versions).
+2. **Clojure driver** (`sparrow-metabase/driver`, skeleton done): Metabase's module layout (`deps.edn`,
+   `resources/metabase-plugin.yaml`, `src/metabase/driver/sparrow.clj`), modelled on Metabase's own non-JDBC SQL
+   driver `bigquery-cloud-sdk` (v0.65.2.2). `driver/register! :sparrow :parent #{:sql}`;
+   - `can-connect?` (`ping`), `describe-database*` (`tables(null)`: every table of every schema),
+     `describe-fields` (`columns` per table, ordered by schema, table, position; DuckDB type name -> base type,
+     lists/structs/maps/intervals as `:type/Text` since their values arrive as text, BLOB `:type/*`),
+     `db-default-timezone` UTC.
+   - `mbql->native`: the `:sql` parent's compiler with `driver/*compile-with-inline-parameters*` bound, so
+     values are written into the SQL text (the server rejects bound parameters, see Open questions).
+   - `execute-reducible-query`: `FlightSqlBridge.execute`, columns from the planned schema, rows reduced lazily
+     batch by batch; a message on Metabase's canceled channel calls `QueryResult.cancel()` and ends the
+     reduction; the result is closed when `respond` returns. Native queries with Metabase parameters (template
+     tags compile to `?`) are refused with an `unsupported-feature` error for now, never run without values.
+   - Features: `describe-fields`; no key constraints, uploads, actions, transforms, routing, impersonation or
+     `set-timezone`; the rest as the `:sql` parent.
+   - Connection form: host, port (8815), user, password or token, default schema, TLS (verify, truststore and
+     its password, Kerberos service principal), planning timeout and retries under advanced options.
+
+   The plugin jar bundles the bridge as the module's shaded jar (`sparrow-metabase-<version>-shaded.jar`:
+   Arrow, gRPC, Netty, Protobuf/Guava, Jackson, BouncyCastle and Apache Commons relocated under
+   `sparrow.metabase.shaded`, slf4j left to Metabase): Metabase plugins share one class loader, and other
+   plugins such as BigQuery bring their own Arrow/gRPC/Netty versions. Arrow needs
+   `--add-opens java.base/java.nio`, which Metabase's jar manifest and Docker image already set.
+
+   Build (CI job `metabase-driver`; clojars.org is not reachable from development sessions): check out
+   `metabase/metabase` at the pinned tag, copy `deps.edn`, `src`, `resources` to `modules/drivers/sparrow`,
+   the shaded jar to its `lib/sparrow-metabase-shaded.jar`, add `metabase/sparrow {:local/root "sparrow"}` to
+   `modules/drivers/deps.edn`, then `clojure -X:build:drivers:build/driver :driver :sparrow` (JDK 25, Clojure CLI
+   as in Metabase's CI) -> `resources/modules/sparrow.metabase-driver.jar`, which goes into Metabase's plugins
+   directory (`MB_PLUGINS_DIR`).
 
 ## Tests
 
 - Bridge: `FlightSqlBridgeTest` (details, type names), `FlightSqlBridgeIntegrationTest` (in-process server:
   sync metadata, every value type incl. nulls, unsigned integers, 100 000 rows over several batches in order,
   aggregation answers, nested values, empty results, early close and cancel, SQL errors, unreachable server).
-- Driver (next): CI job that checks out Metabase at a pinned tag, builds the driver with Metabase's build
-  scripts, starts a server container/in-process server with TPC-H-shaped data, and runs sync + native and
-  MBQL (GUI-built) queries with answers checked; then a comparison with the JDBC-based community driver.
+- Driver smoke test (CI job `metabase-driver`, `driver/test/smoke.py`): the in-process server with the bridge
+  tests' tables (`SmokeServer`, test sources) and the `metabase/metabase` container of the pinned tag with the
+  built plugin; through Metabase's API: setup, the `sparrow` engine is listed, a database is added and synced
+  (tables, `database_type`/`base_type` of the fields), a native aggregation and an MBQL count with breakout and
+  filter return the expected rows.
+- Next: the TPC-H-shaped data and query set with answers checked (native + MBQL incl. date bucketing, which
+  needs DuckDB's date functions in `sql.qp`), native query parameters, then a comparison with the JDBC-based
+  community driver.

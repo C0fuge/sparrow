@@ -1,0 +1,8 @@
+;; Metabase driver module (copied to modules/drivers/sparrow of a Metabase checkout and built there with
+;; `clojure -X:build:drivers:build/driver :driver :sparrow`, see .github/workflows/ci.yml). The bridge is the
+;; shaded jar of the sparrow-metabase Maven module (third-party packages relocated), copied to lib/ before the build.
+{:paths
+ ["src" "resources"]
+
+ :deps
+ {sparrow/sparrow-metabase-bridge {:local/root "lib/sparrow-metabase-shaded.jar"}}}

@@ -2,3 +2,4 @@ target/
 .kestrel/
 .idea/
 *.iml
+sparrow-metabase/driver/lib/
