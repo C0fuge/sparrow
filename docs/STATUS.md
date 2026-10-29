@@ -15,18 +15,20 @@ N1. **Apache Flink connector (native).** Done so far (step 1, see `docs/flink.md
     MiniCluster tests against two-node TLS clusters (`tls.truststore` options, in-process Kerby KDC); N1g
     TPC-H SF0.1: all 22 queries through Flink SQL over catalog tables of a 2-node partial-mode cluster equal
     DuckDB's answers on the same Parquet (`TpchIntegrationTest`, data from `TpchData`); N1h perf vs Flink JDBC +
-    Flight SQL JDBC driver and SF 1 answers (`TpchPerfTest`, `perf` tag, see Log). Remaining, in order:
-    - **N1i next:** connector shading: an uber jar for `lib/` or `ADD JAR` (relocate Arrow, gRPC, Netty,
-      Protobuf, Jackson, BouncyCastle as the server's Spark connector does; keep Flink and slf4j provided;
-      merge `META-INF/services`), plus a MiniCluster test that loads only the shaded jar in a separate class
-      loader (`ADD JAR` / user-code class loader) and reads a table. Then a Flink 2.x module.
+    Flight SQL JDBC driver and SF 1 answers (`TpchPerfTest`, `perf` tag, see Log); N1i shaded jar
+    (`sparrow-flink-<version>-shaded.jar`, relocated deps, `ShadedJarIT` loads it with `ADD JAR`); N1j Flink 2.x
+    (`-Pflink2` = Flink 2.3.0, same sources; CI matrix runs every test on 1.20 and 2.3). N1 is complete apart
+    from these follow-ups, none blocking:
+    - Perf baseline on 2.x: `TpchPerfTest` uses `flink-connector-jdbc-core` 3.3.0-1.20 also under `-Pflink2`
+      (it compiles; the `perf` tag was not run on 2.x). Switch to the 2.x JDBC connector release if needed.
+    - Open questions below (failover header, batch-only, bound parameters) wait for the maintainer.
     Goal (maintainer): `DynamicTableSource` (ScanTableSource) + `Catalog` over the server's metadata: one
     Flink split per Flight endpoint in partial mode (parallel readers, backup locations for failover), Arrow batches
     converted to Flink `RowData` columnar-wise (no per-value boxing where avoidable), projection + filter + limit pushdown
     into the server SQL, auth (token/basic, Kerberos as in the Spark connector), TLS. Flink 1.20 LTS first, then 2.x.
     Tests: Flink MiniCluster against the in-process server, TPC-H SF0.1/SF1 answers equal to DuckDB reading the files.
     Perf: Flink SQL TPC-H SF1 via the connector vs Flink's JDBC connector with the Flight SQL JDBC driver (baseline).
-N2. Flink lookup source (dimension joins: `LookupTableSource` with a small cache) and bounded/unbounded semantics notes.
+N2. **next:** Flink lookup source (dimension joins: `LookupTableSource` with a small cache) and bounded/unbounded semantics notes.
 N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow Flight SQL Java client directly (no
     JDBC), DuckDB SQL dialect, metadata sync from Flight SQL `GetTables`/`GetColumns`; CI in a `metabase/metabase`
     container: sync + native and GUI-built queries, answers checked; speed vs the JDBC-based community driver.
@@ -126,3 +128,14 @@ N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow 
   jdbc-part 1.27x slower), 22 queries 253/268/270 (1.06x; Q1 14.1/17.2/16.9, Q9 99.8/102.4/103.2 - joins in
   Flink dominate; the in-process nodes run DuckDB with 1 thread). Flink's SUM(INT) keeps INT and overflows at
   SF 1 (the scan probe casts). 94 tests (+3). CI 40797950700 green.
+- 2026-10-29: N1i done — shaded jar `sparrow-flink-<version>-shaded.jar` (maven-shade, ~32 MB): Arrow, gRPC,
+  Netty, perfmark, `com.google` (Protobuf, common protos, Guava, Gson, flatbuffers), Jackson, BouncyCastle and
+  Apache Commons relocated under `sparrow.flink.shaded`; client core and the connector unrelocated; Flink and
+  slf4j left out (`flink-connector-base` is in `flink-dist` via `flink-connector-files`, checked for 1.20.3 and
+  2.3.0); no native code (netty-tcnative and the epoll libraries dropped: JDK TLS, NIO), no multi-release
+  copies. `ShadedJarIT` (failsafe, after `package`; the main classes directory replaced by an empty one):
+  jar holds only connector/client-core/relocated classes, the connector is absent without the jar, and after
+  `ADD JAR` a table (with filter/limit pushdown) and a catalog read a 2-node TLS cluster with a token. 94 + 4
+  tests. CI 40807395590 green. N1j done — the unchanged sources compile and pass all 98 tests against Flink
+  2.3.0 (no deprecation warnings); profile `-Pflink2` (classifier `shaded-flink2`), CI matrix 1.20/2.x.
+  CI <N1J_RUN> green. Local builds: `~/.wgetrc` needs `ca_certificate=` the proxy CA for `mvnw`'s download.

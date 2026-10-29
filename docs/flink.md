@@ -1,6 +1,7 @@
 # Flink connector (`sparrow-flink`)
 
-Native Arrow Flight table source and catalog for Flink SQL / Table API (Flink 1.20). Status and backlog: `STATUS.md`.
+Native Arrow Flight table source and catalog for Flink SQL / Table API: Flink 1.20 LTS (default build) and
+Flink 2.x (`-Pflink2`, Flink 2.3.0; same sources, the full test set runs against both in CI). Status and backlog: `STATUS.md`.
 
 ```sql
 CREATE TABLE orders (o_orderkey BIGINT, o_totalprice DECIMAL(15, 2), o_orderdate DATE)
@@ -23,7 +24,8 @@ Selected columns, filters and `LIMIT` are pushed into the server SQL (see below)
 
 ## Deployment
 
-`./mvnw package` builds `sparrow-flink/target/sparrow-flink-<version>-shaded.jar` (about 32 MB): the connector,
+`./mvnw package` builds `sparrow-flink/target/sparrow-flink-<version>-shaded.jar` (about 32 MB; for Flink 2.x
+`./mvnw -Pflink2 package` builds `...-shaded-flink2.jar`, use the jar built for the cluster's line): the connector,
 the server's client core and their dependencies, with Arrow, gRPC, Netty, Protobuf/Guava/Gson (`com.google`),
 Jackson, BouncyCastle and Apache Commons relocated under `sparrow.flink.shaded`, so they cannot clash with the
 versions in Flink, Hadoop or other connectors. Flink itself and slf4j are not in the jar (the cluster provides

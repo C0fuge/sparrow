@@ -18,7 +18,17 @@ permissions:
 
 jobs:
   build:
+    name: build (${{ matrix.flink }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Flink 1.20 LTS (default) and Flink 2.x (-Pflink2): same sources, both test sets
+        include:
+          - flink: flink-1.20
+            profile: ''
+          - flink: flink-2
+            profile: '-Pflink2'
     timeout-minutes: 45
     env:
       KESTREL_REF: ${{ inputs.kestrel_ref }}
@@ -40,8 +50,10 @@ jobs:
           path: |
             ~/.m2/repository
             !~/.m2/repository/pro/surpin
-          key: m2-${{ hashFiles('**/pom.xml') }}
-          restore-keys: m2-
+          key: m2-${{ matrix.flink }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            m2-${{ matrix.flink }}-
+            m2-
       - name: Server artifacts cache
         id: kestrel-cache
         uses: actions/cache@v4
@@ -52,13 +64,15 @@ jobs:
         if: steps.kestrel-cache.outputs.cache-hit != 'true' || inputs.kestrel_ref != ''
         run: KESTREL_REF='${{ steps.ref.outputs.ref }}' scripts/install-kestrel.sh
       - name: Build and test
-        run: ./mvnw -B -ntp verify
+        run: ./mvnw -B -ntp ${{ matrix.profile }} verify
       - name: Checkstyle and SpotBugs
-        run: ./mvnw -B -ntp -DskipTests checkstyle:check spotbugs:check
+        run: ./mvnw -B -ntp ${{ matrix.profile }} -DskipTests checkstyle:check spotbugs:check
       - name: Test reports
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: surefire-reports
-          path: '**/target/surefire-reports/'
+          name: test-reports-${{ matrix.flink }}
+          path: |
+            **/target/surefire-reports/
+            **/target/failsafe-reports/
           retention-days: 7

@@ -112,8 +112,8 @@
     </dependencies>
     <build>
         <plugins>
-            <!-- sparrow-flink-<version>-shaded.jar: the connector with its dependencies for Flink's lib/ or ADD JAR.
-                 Third-party packages are relocated under sparrow.flink.shaded so they cannot clash with the
+            <!-- sparrow-flink-<version>-shaded.jar (-shaded-flink2.jar with -Pflink2): the connector with its
+                 dependencies for Flink's lib/ or ADD JAR. Third-party packages are relocated under sparrow.flink.shaded so they cannot clash with the
                  versions of Flink, Hadoop or other connectors. Flink and slf4j are left out (provided by the
                  cluster; flink-dist bundles flink-connector-base through flink-connector-files). netty-tcnative is
                  left out: gRPC then uses the JDK's TLS (ALPN since Java 9) and the jar carries no native code
@@ -126,7 +126,7 @@
                         <phase>package</phase><goals><goal>shade</goal></goals>
                         <configuration>
                             <shadedArtifactAttached>true</shadedArtifactAttached>
-                            <shadedClassifierName>shaded</shadedClassifierName>
+                            <shadedClassifierName>${shaded.classifier}</shadedClassifierName>
                             <createDependencyReducedPom>false</createDependencyReducedPom>
                             <artifactSet>
                                 <excludes>
@@ -190,7 +190,7 @@
                         <configuration>
                             <classesDirectory>${project.build.directory}/no-classes</classesDirectory>
                             <systemPropertyVariables>
-                                <sparrow.shaded.jar>${project.build.directory}/${project.build.finalName}-shaded.jar</sparrow.shaded.jar>
+                                <sparrow.shaded.jar>${project.build.directory}/${project.build.finalName}-${shaded.classifier}.jar</sparrow.shaded.jar>
                             </systemPropertyVariables>
                         </configuration>
                     </execution>

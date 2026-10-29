@@ -20,7 +20,9 @@
         <!-- Server artifacts installed by scripts/install-kestrel.sh at kestrel.ref -->
         <kestrel.version>1.0.0</kestrel.version>
         <arrow.version>19.0.0</arrow.version>
+        <!-- Flink 1.20 LTS by default; -Pflink2 builds and tests against Flink 2.x (same sources) -->
         <flink.version>1.20.3</flink.version>
+        <shaded.classifier>shaded</shaded.classifier>
         <flink-jdbc.version>3.3.0-1.20</flink-jdbc.version>
         <hadoop.version>3.5.0</hadoop.version>
         <!-- Kept equal to the server's BOMs: one gRPC/Netty/Jackson line for client core and the test server
@@ -176,6 +178,13 @@
     </build>
 
     <profiles>
+        <profile>
+            <id>flink2</id>
+            <properties>
+                <flink.version>2.3.0</flink.version>
+                <shaded.classifier>shaded-flink2</shaded.classifier>
+            </properties>
+        </profile>
         <profile>
             <id>perf</id>
             <properties>
