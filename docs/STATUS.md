@@ -138,4 +138,4 @@ N3. **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow 
   `ADD JAR` a table (with filter/limit pushdown) and a catalog read a 2-node TLS cluster with a token. 94 + 4
   tests. CI 40807395590 green. N1j done — the unchanged sources compile and pass all 98 tests against Flink
   2.3.0 (no deprecation warnings); profile `-Pflink2` (classifier `shaded-flink2`), CI matrix 1.20/2.x.
-  CI <N1J_RUN> green. Local builds: `~/.wgetrc` needs `ca_certificate=` the proxy CA for `mvnw`'s download.
+  CI 40807995648 green (both matrix jobs). Local builds: `~/.wgetrc` needs `ca_certificate=` the proxy CA for `mvnw`'s download.
