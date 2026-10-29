@@ -183,7 +183,8 @@ jobs:
         if: env.PERF_ROWS != '0'
         run: |
           cp -r sparrow-metabase/driver-jdbc metabase/modules/drivers/sparrow-jdbc
-          sed -i 's|{metabase/athena |{metabase/sparrow-jdbc       {:local/root "sparrow-jdbc"}\n  metabase/athena |' \
+          # after the native driver's line, which took the place of `{metabase/athena`
+          sed -i 's|^  metabase/athena |  metabase/sparrow-jdbc       {:local/root "sparrow-jdbc"}\n  metabase/athena |' \
             metabase/modules/drivers/deps.edn
           grep -q 'metabase/sparrow-jdbc' metabase/modules/drivers/deps.edn
           cd metabase
