@@ -9,7 +9,10 @@
    [clojure.string :as str]
    [metabase.driver :as driver]
    [metabase.driver.sql-jdbc.connection :as sql-jdbc.conn]
-   [metabase.driver.sql-jdbc.sync :as sql-jdbc.sync]))
+   [metabase.driver.sql-jdbc.sync :as sql-jdbc.sync])
+  (:import
+   (java.sql Connection DriverManager ResultSet Statement)
+   (java.util Properties)))
 
 (set! *warn-on-reflection* true)
 
@@ -32,6 +35,19 @@
            :subname       (str "//" host ":" (or port 8815))
            :useEncryption "false"}
     (not (str/blank? token)) (assoc :token token)))
+
+(defmethod driver/can-connect? :sparrow-jdbc
+  [driver details]
+  ;; `SELECT 1` as a plain statement: the server's CreatePreparedStatement only plans queries over a table, and the
+  ;; `:sql-jdbc` default runs the test query as a prepared statement
+  (let [{:keys [subprotocol subname], :as spec} (sql-jdbc.conn/connection-details->spec driver details)
+        props (Properties.)]
+    (doseq [[k v] (dissoc spec :classname :subprotocol :subname)]
+      (.setProperty props (name k) (str v)))
+    (with-open [conn ^Connection (DriverManager/getConnection (str "jdbc:" subprotocol ":" subname) props)
+                stmt ^Statement (.createStatement conn)
+                rs   ^ResultSet (.executeQuery stmt "SELECT 1")]
+      (.next rs))))
 
 (defmethod sql-jdbc.sync/database-type->base-type :sparrow-jdbc
   [_driver database-type]
