@@ -174,4 +174,4 @@ N3. **next:** **Metabase native driver**: a Metabase driver (Clojure) that uses 
   (lazy `Object[]` rows), `ArrowValues` (Arrow -> Java values Metabase handles, timestamps with zone as
   `OffsetDateTime` in the column's zone), `DuckDbTypes` (DuckDB type names for `database_type`). Found: Parquet
   stores DuckDB's unsigned integers as wider signed types (UTINYINT -> SMALLINT, UBIGINT -> DECIMAL(20,0)).
-  15 tests (3 unit + 12 against the in-process server). CI 40824250224 (running).
+  15 tests (3 unit + 12 against the in-process server). CI 40824250224 green (both matrix jobs).
