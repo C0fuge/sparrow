@@ -57,14 +57,13 @@ def main():
         "prefs": {"site_name": "smoke", "allow_tracking": False},
     })["id"]
 
-    engines = call("GET", "/api/session/properties")["engines"]
-    check("driver plugin loaded", "sparrow" in engines, sorted(engines))
-
     db = call("POST", "/api/database", {
         "engine": "sparrow", "name": "sparrow",
         "details": {"host": "localhost", "port": PORT, "user": "test-user", "token": "sparrow-test"},
     })
     db_id = db["id"]
+    # an unknown engine is refused, so this also shows that the plugin registered the driver
+    check("database added", db.get("engine") == "sparrow", db)
 
     deadline = time.time() + 300
     tables = {}
