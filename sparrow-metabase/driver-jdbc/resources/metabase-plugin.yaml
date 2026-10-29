@@ -1,0 +1,25 @@
+info:
+  name: Metabase Sparrow JDBC Baseline Driver
+  version: 0.1.0-SNAPSHOT
+  description: Perf baseline - the Sparrow server through the Arrow Flight SQL JDBC driver (not for production).
+dependencies:
+  - plugin: Metabase Sparrow Driver
+driver:
+  name: sparrow-jdbc
+  display-name: Sparrow via Arrow Flight SQL JDBC (perf baseline)
+  lazy-load: true
+  parent: sql-jdbc
+  connection-properties:
+    - host
+    - merge:
+        - port
+        - placeholder: 8815
+    - name: token
+      display-name: Token
+      type: password
+      required: false
+init:
+  - step: load-namespace
+    namespace: metabase.driver.sparrow-jdbc
+  - step: register-jdbc-driver
+    class: org.apache.arrow.driver.jdbc.ArrowFlightJdbcDriver

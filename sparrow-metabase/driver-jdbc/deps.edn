@@ -1,0 +1,8 @@
+;; Perf baseline only, not shipped: a Metabase driver that reaches the Sparrow server through the Arrow Flight SQL
+;; JDBC driver (`sql-jdbc` parent), for the speed comparison with the native driver (`driver/test/perf.py`). Built
+;; like the native driver, in modules/drivers/sparrow-jdbc of a Metabase checkout (see .github/workflows/ci.yml).
+{:paths
+ ["src" "resources"]
+
+ :deps
+ {org.apache.arrow/flight-sql-jdbc-driver {:mvn/version "19.0.0"}}}

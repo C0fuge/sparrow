@@ -17,7 +17,8 @@ import pro.surpin.data.arrowflight.server.TestFlightServerHelper;
  * (100 000 rows, several Arrow batches), {@code sparrow.nested} (list, struct and map columns) and the shop tables
  * of the Metabase smoke test, {@code shop.orders} ({@value #ORDERS} rows) and {@code shop.customers}
  * ({@value #CUSTOMERS} rows), whose values follow formulas that {@code driver/test/smoke.py} repeats to compute the
- * expected answers.
+ * expected answers. With perf rows, also {@code perf.lineitem}: a TPC-H-lineitem-shaped table with deterministic
+ * hash-based values in four files, for the Metabase speed comparison ({@code driver/test/perf.py}).
  */
 final class TestServer implements AutoCloseable {
 
@@ -40,9 +41,26 @@ final class TestServer implements AutoCloseable {
 
     /** Starts a server over freshly generated data. */
     static TestServer start() throws Exception {
+        return start(0);
+    }
+
+    /**
+     * Starts a server over freshly generated data, with {@code perf.lineitem} if {@code perfRows} is positive.
+     *
+     * @param perfRows rows of {@code perf.lineitem} (6 000 000 is TPC-H SF 1), 0 for none
+     */
+    static TestServer start(long perfRows) throws Exception {
         Path dir = Files.createTempDirectory("sparrow-metabase-test");
         writeTables(dir);
+        if (perfRows > 0) {
+            writeLineitem(dir, perfRows);
+        }
         return new TestServer(TestFlightServerHelper.builder().dataDir(dir.toString()).start(), dir);
+    }
+
+    /** The directory of the generated Parquet files. */
+    Path dataDir() {
+        return dataDir;
     }
 
     /** Metabase connection details of this server (as the driver passes them: string keys). */
@@ -91,6 +109,31 @@ final class TestServer implements AutoCloseable {
             s.execute("COPY (SELECT i::INTEGER AS id, 'Customer ' || i AS name,"
                     + " ['Berlin', 'Paris', 'Rome', 'Oslo'][i % 4 + 1] AS city FROM range(" + CUSTOMERS
                     + ") t(i)) TO '" + customers.resolve("part-0.parquet") + "' (FORMAT parquet)");
+        }
+    }
+
+    /**
+     * Writes {@code perf.lineitem} with {@code rows} rows as {@code <dir>/perf/lineitem/part-<i>.parquet} (four files):
+     * TPC-H lineitem columns and value domains, values from hashes of the row number (four lines per order).
+     */
+    static void writeLineitem(Path dir, long rows) throws Exception {
+        Path lineitem = Files.createDirectories(dir.resolve("perf/lineitem"));
+        try (Connection c = DriverManager.getConnection("jdbc:duckdb:"); Statement s = c.createStatement()) {
+            s.execute("CREATE MACRO r(n, i, k) AS (hash(i, k) % n)::BIGINT");
+            for (int part = 0; part < 4; part++) {
+                s.execute("COPY (SELECT (i // 4 + 1)::BIGINT AS l_orderkey, (r(200000, i, 1) + 1)::INTEGER AS l_partkey,"
+                        + " (r(10000, i, 2) + 1)::INTEGER AS l_suppkey, (i % 4 + 1)::INTEGER AS l_linenumber,"
+                        + " (r(50, i, 3) + 1)::DECIMAL(15,2) AS l_quantity,"
+                        + " ((r(10000000, i, 4) + 90000) / 100)::DECIMAL(15,2) AS l_extendedprice,"
+                        + " (r(11, i, 5) / 100)::DECIMAL(15,2) AS l_discount,"
+                        + " (r(9, i, 6) / 100)::DECIMAL(15,2) AS l_tax,"
+                        + " ['A', 'N', 'R'][r(3, i, 7) + 1] AS l_returnflag, ['F', 'O'][r(2, i, 8) + 1] AS l_linestatus,"
+                        + " DATE '1992-01-02' + r(2526, i, 9)::INTEGER AS l_shipdate,"
+                        + " ['AIR', 'FOB', 'MAIL', 'RAIL', 'REG AIR', 'SHIP', 'TRUCK'][r(7, i, 10) + 1] AS l_shipmode,"
+                        + " 'comment ' || r(100000, i, 11) AS l_comment"
+                        + " FROM range(" + rows + ") t(i) WHERE i % 4 = " + part + ") TO '"
+                        + lineitem.resolve("part-" + part + ".parquet") + "' (FORMAT parquet)");
+            }
         }
     }
 

@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.nio.file.Files;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -31,12 +32,14 @@ import org.junit.jupiter.api.Test;
 @Tag("integration")
 class FlightSqlBridgeIntegrationTest {
 
+    private static final long PERF_ROWS = 4000;
+
     private static TestServer server;
     private static FlightSqlBridge bridge;
 
     @BeforeAll
     static void start() throws Exception {
-        server = TestServer.start();
+        server = TestServer.start(PERF_ROWS);
         bridge = FlightSqlBridge.connect(server.details());
     }
 
@@ -56,6 +59,23 @@ class FlightSqlBridgeIntegrationTest {
     @Test
     void ping() {
         assertTrue(bridge.ping());
+    }
+
+    @Test
+    void perfLineitem() throws Exception {
+        // the speed comparison's table: TPC-H lineitem columns and domains, four lines per order, four files
+        assertEquals(List.of("l_orderkey", "l_partkey", "l_suppkey", "l_linenumber", "l_quantity", "l_extendedprice",
+                "l_discount", "l_tax", "l_returnflag", "l_linestatus", "l_shipdate", "l_shipmode", "l_comment"),
+                bridge.columns("perf", "lineitem").stream().map(Column::name).toList());
+        Object[] row = rows("SELECT count(*), count(DISTINCT l_orderkey), max(l_linenumber), min(l_quantity),"
+                + " max(l_quantity), min(l_discount), max(l_discount), min(l_shipdate) >= DATE '1992-01-02',"
+                + " max(l_shipdate) <= DATE '1998-12-01', count(DISTINCT l_returnflag), count(DISTINCT l_shipmode)"
+                + " FROM perf.lineitem").get(0);
+        assertArrayEquals(new Object[] {PERF_ROWS, PERF_ROWS / 4, 4, new BigDecimal("1.00"), new BigDecimal("50.00"),
+            new BigDecimal("0.00"), new BigDecimal("0.10"), true, true, 3L, 7L}, row);
+        try (var files = Files.list(server.dataDir().resolve("perf/lineitem"))) {
+            assertEquals(4, files.count());
+        }
     }
 
     @Test

@@ -8,6 +8,11 @@ on:
         description: Server commit or branch to build against (default kestrel.ref)
         required: false
         default: ''
+      metabase_perf:
+        description: Also run the Metabase speed comparison (native driver vs JDBC route, perf.py)
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -80,6 +85,7 @@ jobs:
   # Metabase driver (sparrow-metabase/driver): built with Metabase's own build scripts in a Metabase checkout at
   # METABASE_TAG, loaded as a plugin into the Metabase container of the same tag, smoke-tested against the
   # in-process server (sparrow-metabase SmokeServer): sync, a native and an MBQL query with answers checked.
+  # Dispatched with metabase_perf: also the JDBC baseline driver (driver-jdbc) and the speed comparison (perf.py).
   metabase-driver:
     name: metabase driver
     runs-on: ubuntu-latest
@@ -89,6 +95,8 @@ jobs:
       METABASE_TAG: v0.65.2.2
       # as Metabase's CI at that tag (.github/scripts/cache-keys.sh)
       CLOJURE_VERSION: 1.12.0.1488
+      # perf.lineitem rows (TPC-H SF 1) for the speed comparison, 0 = no perf run
+      PERF_ROWS: ${{ inputs.metabase_perf && '6000000' || '0' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -131,8 +139,8 @@ jobs:
           nohup java --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED \
             --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED \
             -cp "target/test-classes:target/classes:$(cat target/cp.txt)" sparrow.metabase.SmokeServer \
-            "$RUNNER_TEMP/flight-port" > "$RUNNER_TEMP/flight-server.log" 2>&1 &
-          for i in $(seq 120); do [ -f "$RUNNER_TEMP/flight-port" ] && break; sleep 1; done
+            "$RUNNER_TEMP/flight-port" "$PERF_ROWS" > "$RUNNER_TEMP/flight-server.log" 2>&1 &
+          for i in $(seq 300); do [ -f "$RUNNER_TEMP/flight-port" ] && break; sleep 1; done
           echo "Flight server on port $(cat "$RUNNER_TEMP/flight-port")"
       - name: Check out Metabase
         uses: actions/checkout@v4
@@ -171,10 +179,20 @@ jobs:
           cd metabase
           clojure -X:build:drivers:build/driver :driver :sparrow
           ls -l resources/modules/sparrow.metabase-driver.jar
+      - name: Build the JDBC baseline driver
+        if: env.PERF_ROWS != '0'
+        run: |
+          cp -r sparrow-metabase/driver-jdbc metabase/modules/drivers/sparrow-jdbc
+          sed -i 's|{metabase/athena |{metabase/sparrow-jdbc       {:local/root "sparrow-jdbc"}\n  metabase/athena |' \
+            metabase/modules/drivers/deps.edn
+          grep -q 'metabase/sparrow-jdbc' metabase/modules/drivers/deps.edn
+          cd metabase
+          clojure -X:build:drivers:build/driver :driver :sparrow-jdbc
+          ls -l resources/modules/sparrow-jdbc.metabase-driver.jar
       - name: Start Metabase with the driver
         run: |
           mkdir -p "$RUNNER_TEMP/plugins"
-          cp metabase/resources/modules/sparrow.metabase-driver.jar "$RUNNER_TEMP/plugins/"
+          cp metabase/resources/modules/sparrow*.metabase-driver.jar "$RUNNER_TEMP/plugins/"
           chmod -R a+rwx "$RUNNER_TEMP/plugins"
           docker run -d --name metabase --network host -v "$RUNNER_TEMP/plugins:/plugins" \
             -e MB_PLUGINS_DIR=/plugins "metabase/metabase:$METABASE_TAG"
@@ -185,6 +203,11 @@ jobs:
           curl -sf http://localhost:3000/api/health
       - name: Smoke test
         run: python3 sparrow-metabase/driver/test/smoke.py http://localhost:3000 "$(cat "$RUNNER_TEMP/flight-port")"
+      - name: Speed comparison
+        if: env.PERF_ROWS != '0'
+        run: |
+          python3 sparrow-metabase/driver/test/perf.py http://localhost:3000 "$(cat "$RUNNER_TEMP/flight-port")" \
+            "$PERF_ROWS"
       - name: Logs
         if: failure()
         run: |
