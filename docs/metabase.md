@@ -45,8 +45,20 @@ Two parts:
      batch by batch; a message on Metabase's canceled channel calls `QueryResult.cancel()` and ends the
      reduction; the result is closed when `respond` returns. Native queries with Metabase parameters (template
      tags compile to `?`) are refused with an `unsupported-feature` error for now, never run without values.
-   - Features: `describe-fields`; no key constraints, uploads, actions, transforms, routing, impersonation or
-     `set-timezone`; the rest as the `:sql` parent.
+   - Temporal units (`sql.qp/date`): truncation with DuckDB's `date_trunc` (DATE results cast back to DATE, TIME
+     rebuilt with `make_time`), parts with `extract` (`dow` + 1 adjusted to Metabase's start of week; DuckDB weeks
+     start on Monday, `db-start-of-week`). TIMESTAMP WITH TIME ZONE values are bucketed and extracted as their UTC
+     wall clock (`timezone('UTC', x)`), so answers do not depend on the server session's time zone; UTC is the
+     database time zone. Intervals as `x + INTERVAL '<n> <unit>'` (DATE cast back), `now()`, `to_timestamp`.
+   - Literals (`sql.qp/inline-value`): `TIMESTAMP '...'`, `TIMESTAMPTZ '...+02:00'`, `TIME`, `TIMETZ` with
+     microseconds (Metabase's defaults cut to milliseconds and write the offset after a space, which DuckDB reads
+     as an unknown zone name). LIKE patterns of string filters keep Metabase's `ESCAPE '\'` (literal `%`/`_`).
+   - Native query parameters: `substitute-native-parameters-in-stage-method` runs the `:sql` substitution with
+     `*compile-with-inline-parameters*`, so template tags and field filters become SQL literals. Anything left
+     as a `?` argument is still refused, never run without its value.
+   - Features: `describe-fields`; no key constraints, uploads, actions, transforms, routing, impersonation,
+     `set-timezone`, `regex`, `datetime-diff` or `convert-timezone` (not implemented for DuckDB yet); the rest as
+     the `:sql` parent (joins, expressions, distinct, median/percentile via `percentile_cont`, window functions).
    - Connection form: host, port (8815), user, password or token, default schema, TLS (verify, truststore and
      its password, Kerberos service principal), planning timeout and retries under advanced options.
 
@@ -72,7 +84,10 @@ Two parts:
   tests' tables (`SmokeServer`, test sources) and the `metabase/metabase` container of the pinned tag with the
   built plugin; through Metabase's API: setup, the `sparrow` engine is listed, a database is added and synced
   (tables, `database_type`/`base_type` of the fields), a native aggregation and an MBQL count with breakout and
-  filter return the expected rows.
-- Next: the TPC-H-shaped data and query set with answers checked (native + MBQL incl. date bucketing, which
-  needs DuckDB's date functions in `sql.qp`), native query parameters, then a comparison with the JDBC-based
-  community driver.
+  filter return the expected rows. On `shop.orders`/`shop.customers` (1000/20 rows from formulas, which
+  `smoke.py` repeats to compute every expected answer without the server): breakouts by month, week (Sunday),
+  quarter, year, day, hour of day, day of week, month of year on DATE/TIMESTAMP/TIMESTAMP WITH TIME ZONE
+  columns, date and timestamptz filters, distinct/median/percentile, a join with a sum by city, string filters
+  (`%`/`_` in values, case-insensitive), native queries with number/text/date tags, an optional clause, a
+  quote in a value and field filters (date range, several values).
+- Next: a larger TPC-H-shaped question set, then a comparison with the JDBC-based community driver.
