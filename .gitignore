@@ -3,3 +3,4 @@ target/
 .idea/
 *.iml
 sparrow-metabase/driver/lib/
+__pycache__/

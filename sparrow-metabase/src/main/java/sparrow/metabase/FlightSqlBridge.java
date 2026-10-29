@@ -7,6 +7,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Properties;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -45,6 +46,16 @@ public final class FlightSqlBridge {
 
     /** Request header naming the result mode. */
     static final String RESULT_MODE_HEADER = "x-flight-result-mode";
+
+    /**
+     * Netty's switch for {@code sun.misc.Unsafe}. In the shaded jar the literal is relocated with Netty
+     * ({@code sparrow.metabase.shaded.io.netty.noUnsafe}), so it only concerns the bundled copy.
+     */
+    static final String NETTY_NO_UNSAFE = "io.netty.noUnsafe";
+
+    static {
+        allowNettyUnsafe(System.getProperties());
+    }
 
     private final Client client;
     private final FlightSqlClient sql;
@@ -134,6 +145,18 @@ public final class FlightSqlBridge {
         }
         config.setConnectTimeoutMs(timeout);
         return config;
+    }
+
+    /**
+     * Lets Netty use {@code sun.misc.Unsafe} unless configured otherwise. Netty 4.2 turns it off by default on
+     * Java 25+ (Metabase's runtime), and Arrow's Netty allocator then fails with a {@code ClassCastException}
+     * ({@code PooledDirectByteBuf} is not a {@code PooledUnsafeDirectByteBuf}) on the first Flight message.
+     * Must run before the (bundled) Netty initializes, hence the static initializer of this entry class.
+     *
+     * @param properties system properties
+     */
+    static void allowNettyUnsafe(Properties properties) {
+        properties.putIfAbsent(NETTY_NO_UNSAFE, "false");
     }
 
     /**

@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 
 import org.apache.arrow.vector.types.FloatingPointPrecision;
 import org.apache.arrow.vector.types.TimeUnit;
@@ -104,5 +105,16 @@ class FlightSqlBridgeTest {
                 "TIMESTAMP WITH TIME ZONE", "DATE", "INTERVAL", "VARCHAR", "VARCHAR[3]", "MAP(VARCHAR, BIGINT)",
                 "STRUCT(\"q\"\"t\" BOOLEAN)"),
                 FlightSqlBridge.columns(schema).stream().map(Column::databaseType).toList());
+    }
+
+    @Test
+    void nettyUnsafeAllowedUnlessConfigured() {
+        Properties unset = new Properties();
+        FlightSqlBridge.allowNettyUnsafe(unset);
+        assertEquals("false", unset.getProperty(FlightSqlBridge.NETTY_NO_UNSAFE));
+        Properties set = new Properties();
+        set.setProperty(FlightSqlBridge.NETTY_NO_UNSAFE, "true");
+        FlightSqlBridge.allowNettyUnsafe(set);
+        assertEquals("true", set.getProperty(FlightSqlBridge.NETTY_NO_UNSAFE));
     }
 }
