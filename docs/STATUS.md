@@ -34,17 +34,15 @@ N2. **Flink lookup source** — done 2026-10-29 (see Log, `docs/flink.md` "Looku
 N3. **next:** **Metabase native driver**: a Metabase driver (Clojure) that uses the Arrow Flight SQL Java client directly (no
     JDBC), DuckDB SQL dialect, metadata sync from Flight SQL `GetTables`/`GetColumns`; CI in a `metabase/metabase`
     container: sync + native and GUI-built queries, answers checked; speed vs the JDBC-based community driver.
-    Plan and state: `docs/metabase.md`. Done: N3a Java bridge, N3b driver skeleton + CI smoke job (see Log).
-    Next step (N3c): answers checked on real queries. Extend `SmokeServer`/`smoke.py` (or a TPC-H-shaped data
-    set as `TpchData` in sparrow-flink) and check through Metabase's API: MBQL with date bucketing (breakout by
-    month/year on DATE and TIMESTAMP columns: needs DuckDB's date functions - implement `sql.qp/date` for
-    `:sparrow` (`date_trunc`, `extract`), `sql.qp/current-datetime-honeysql-form`, `unix-timestamp->honeysql`,
-    `add-interval-honeysql-form`, modelled on Metabase's `:postgres`/community DuckDB driver), joins between
-    tables, `distinct`, `percentile`/`median` (or switch the features off), string filters (`contains`,
-    `starts-with`, case-insensitive), and native queries with template tags: substitute values into the SQL
-    text (`driver/substitute-native-parameters` with inline literals) instead of refusing them (today an
-    `unsupported-feature` error). Each feature the server cannot answer correctly: `database-supports?` false.
-    Then (N3d) the speed comparison with the JDBC-based community driver.
+    Plan and state: `docs/metabase.md`. Done: N3a Java bridge, N3b driver skeleton + CI smoke job, N3c answers
+    checked on real queries (date bucketing, joins, distinct/percentile, string filters, native template tags;
+    see Log).
+    Next step (N3d): speed comparison with the JDBC-based route (Metabase with the Arrow Flight SQL JDBC driver,
+    as the Flink perf baseline used it; it needs bound parameters inlined, see Open questions): same questions
+    through Metabase's API on a larger data set (e.g. `TpchData`-shaped SF 0.1/1 in `SmokeServer`), wall time
+    per question, `perf`-style (local or a `workflow_dispatch`-only CI job, not on every push). Follow-ups, none
+    blocking: `datetime-diff`, `convert-timezone`, `regex` (switched off now) with DuckDB's `date_diff`,
+    `timezone`, `regexp_extract`; a TPC-H-shaped question set in the smoke test.
 
 ## Open questions
 
@@ -192,3 +190,16 @@ N3. **next:** **Metabase native driver**: a Metabase driver (Clojure) that uses 
   pre-check without Metabase: the driver namespace against stub Metabase namespaces + the shaded jar + the
   in-process server, JDK 21 and 25. 16 bridge tests (+1). CI 40830332236 red (Metabase 0.65 has no `engines`
   in session properties), 40830856369 red (the Netty/Unsafe failure), 40831748643 green (all three jobs).
+- 2026-10-29: N3c done — Metabase driver answers checked on real queries. `sql.qp/date` for `:sparrow`
+  (`date_trunc`/`extract`; DATE results cast back to DATE since DuckDB's `date_trunc` returns TIMESTAMP; TIME
+  via `make_time`; TIMESTAMP WITH TIME ZONE bucketed as `timezone('UTC', x)`, since `date_trunc` on it follows
+  the server session's zone; weeks start Monday in DuckDB, adjusted to Metabase's start of week), interval
+  arithmetic (`INTERVAL 'n unit'`), `now()`, `to_timestamp`. Found: Metabase's default TIMESTAMPTZ literal
+  (`timestamp with time zone '... +02:00'`) fails in DuckDB ("Unknown TimeZone '+02:00'") - `inline-value`
+  overrides write `TIMESTAMPTZ '...+02:00'` (and microseconds for TIMESTAMP/TIME). Native template tags and
+  field filters now substituted as inline literals (the `:sql` substitution with
+  `*compile-with-inline-parameters*`) instead of refused; leftover `?` arguments still refused. `regex`,
+  `datetime-diff`, `convert-timezone` switched off. Smoke data `shop.orders`/`shop.customers` (`TestServer`),
+  expected answers computed in `smoke.py` from the generating formulas (checked locally against DuckDB): 24
+  new checks (8 temporal breakouts, date/timestamptz filters, distinct/median/percentile, join, 6 string
+  filters, 5 native queries with tags). CI 40843975383 green (all three jobs, 29 smoke checks).
